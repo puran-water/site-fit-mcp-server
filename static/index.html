@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Site-Fit Viewer</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+          crossorigin="">
+
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <h1>Site-Fit Viewer</h1>
+            <div id="status">Ready</div>
+        </header>
+
+        <div id="main-container">
+            <!-- Sidebar with solution list -->
+            <aside id="sidebar">
+                <div class="section">
+                    <h2>Solutions</h2>
+                    <div id="solution-list">
+                        <p class="placeholder">No solutions loaded. Generate or load a solution to view.</p>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Selected Solution</h2>
+                    <div id="solution-details">
+                        <p class="placeholder">Select a solution to view details.</p>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Layers</h2>
+                    <div id="layer-controls">
+                        <label><input type="checkbox" id="layer-boundary" checked> Site Boundary</label>
+                        <label><input type="checkbox" id="layer-structures" checked> Structures</label>
+                        <label><input type="checkbox" id="layer-roads" checked> Roads</label>
+                        <label><input type="checkbox" id="layer-entrances" checked> Entrances</label>
+                        <label><input type="checkbox" id="layer-labels" checked> Labels</label>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- Map container -->
+            <div id="map-container">
+                <div id="map"></div>
+
+                <!-- Legend -->
+                <div id="legend">
+                    <h3>Legend</h3>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #3388ff; border: 2px solid #2266cc;"></span>
+                        Site Boundary
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #ff7800;"></span>
+                        Structures
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #666666;"></span>
+                        Roads
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #00ff00;"></span>
+                        Entrances
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+            crossorigin=""></script>
+
+    <script src="app.js"></script>
+</body>
+</html>

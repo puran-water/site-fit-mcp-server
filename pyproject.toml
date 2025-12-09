@@ -1,0 +1,69 @@
+[project]
+name = "site-fit-mcp-server"
+version = "0.1.0"
+description = "MCP server for constraint-based site layout optimization of wastewater/biogas facilities"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Process Engineering Team"}
+]
+keywords = ["mcp", "site-layout", "constraint-programming", "wastewater", "biogas"]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "starlette>=0.27.0",
+    "shapely>=2.0.0",
+    "pyclipper>=1.3.0",
+    "ortools>=9.8.0",
+    "networkx>=3.1",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "scikit-learn>=1.3.0",
+    "numpy>=1.24.0",
+    "geojson>=3.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "ruff>=0.0.280",
+    "mypy>=1.4.0",
+]
+dxf = [
+    "ezdxf>=1.0.0",
+]
+
+[project.scripts]
+site-fit-mcp = "src.server:main"
+site-fit-serve = "src.server:run_with_static_server"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

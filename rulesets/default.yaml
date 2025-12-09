@@ -1,0 +1,64 @@
+# Site-Fit Default Ruleset
+# Engineering rules for wastewater/biogas facility site layout
+# Override values at request time via rules_override parameter
+
+# Property line and boundary setbacks (meters)
+setbacks:
+  property_line_default: 7.5
+  property_line_front: null    # Uses default if null
+  property_line_rear: null     # Uses default if null
+  property_line_side: null     # Uses default if null
+  wetland_buffer: 15.0
+  watercourse_buffer: 30.0
+
+# Equipment-to-boundary setbacks by equipment type (meters)
+equipment_to_boundary:
+  default: 5.0
+  digester: 15.0
+  flare: 30.0
+  chemical_storage: 10.0
+  blower_building: 10.0
+  electrical_building: 8.0
+
+# Equipment-to-equipment clearances (meters)
+# Format: "type1_to_type2" for specific pairs, "type_to_any" for wildcards
+equipment_clearances:
+  default: 3.0
+  # Digesters - larger clearances for safety and maintenance
+  digester_to_any: 10.0
+  digester_to_digester: 5.0
+  # Flares - significant safety setbacks
+  flare_to_any: 75.0
+  # Process equipment adjacencies
+  aeration_to_clarifier: 5.0
+  aeration_to_aeration: 3.0
+  clarifier_to_clarifier: 3.0
+  # Buildings
+  building_to_building: 6.0
+  # Tanks
+  tank_to_tank: 3.0
+  eq_tank_to_tank: 3.0
+  # Pump stations
+  pump_station_to_any: 3.0
+
+# Fire separation requirements (meters)
+# Takes precedence over clearances when larger
+fire_separation:
+  default: 0.0
+  flare_to_any: 75.0
+  chemical_storage_to_building: 15.0
+  electrical_building_to_digester: 15.0
+  fuel_storage_to_any: 30.0
+  generator_to_building: 10.0
+
+# Road and vehicle access rules (meters)
+access:
+  road_width: 6.0
+  min_turning_radius: 12.0
+  dock_depth: 15.0
+  fire_lane_width: 6.0
+  max_dead_end_length: 150.0
+
+# Topology constraint weights (soft constraints)
+adjacency_preference_weight: 10.0  # Higher = stronger preference for topology adjacencies
+flow_direction_weight: 5.0         # Higher = stronger east-west flow preference

@@ -1,0 +1,291 @@
+/* Site-Fit Viewer Styles */
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    background: #1a1a2e;
+    color: #eee;
+    height: 100vh;
+    overflow: hidden;
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    background: #16213e;
+    border-bottom: 1px solid #0f3460;
+}
+
+header h1 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #e94560;
+}
+
+#status {
+    font-size: 0.875rem;
+    color: #888;
+    padding: 4px 12px;
+    background: #0f3460;
+    border-radius: 4px;
+}
+
+#main-container {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* Sidebar */
+#sidebar {
+    width: 320px;
+    background: #16213e;
+    border-right: 1px solid #0f3460;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+}
+
+.section {
+    padding: 16px;
+    border-bottom: 1px solid #0f3460;
+}
+
+.section h2 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: #888;
+    margin-bottom: 12px;
+}
+
+.placeholder {
+    font-size: 0.875rem;
+    color: #666;
+    font-style: italic;
+}
+
+/* Solution list */
+#solution-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.solution-card {
+    background: #0f3460;
+    border-radius: 8px;
+    padding: 12px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: 2px solid transparent;
+}
+
+.solution-card:hover {
+    background: #1a4f82;
+}
+
+.solution-card.selected {
+    border-color: #e94560;
+}
+
+.solution-card .rank {
+    font-size: 1.25rem;
+    font-weight: bold;
+    color: #e94560;
+}
+
+.solution-card .metrics {
+    font-size: 0.75rem;
+    color: #aaa;
+    margin-top: 4px;
+}
+
+.solution-card .diversity-note {
+    font-size: 0.75rem;
+    color: #888;
+    font-style: italic;
+    margin-top: 4px;
+}
+
+/* Solution details */
+#solution-details {
+    font-size: 0.875rem;
+}
+
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid #0f3460;
+}
+
+.detail-row .label {
+    color: #888;
+}
+
+.detail-row .value {
+    font-weight: 500;
+}
+
+/* Layer controls */
+#layer-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#layer-controls label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.875rem;
+}
+
+#layer-controls input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #e94560;
+}
+
+/* Map container */
+#map-container {
+    flex: 1;
+    position: relative;
+}
+
+#map {
+    width: 100%;
+    height: 100%;
+    background: #1a1a2e;
+}
+
+/* Override Leaflet tile background for CRS.Simple */
+.leaflet-container {
+    background: #1a1a2e;
+}
+
+/* Legend */
+#legend {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    background: rgba(22, 33, 62, 0.95);
+    border-radius: 8px;
+    padding: 12px 16px;
+    z-index: 1000;
+    min-width: 150px;
+}
+
+#legend h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: #888;
+    margin-bottom: 8px;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.75rem;
+    margin: 4px 0;
+}
+
+.legend-color {
+    width: 20px;
+    height: 12px;
+    border-radius: 2px;
+}
+
+/* Popup styles */
+.leaflet-popup-content-wrapper {
+    background: #16213e;
+    color: #eee;
+    border-radius: 8px;
+}
+
+.leaflet-popup-content {
+    margin: 8px 12px;
+    font-size: 0.875rem;
+}
+
+.leaflet-popup-tip {
+    background: #16213e;
+}
+
+.popup-title {
+    font-weight: 600;
+    color: #e94560;
+    margin-bottom: 4px;
+}
+
+.popup-detail {
+    color: #aaa;
+    font-size: 0.75rem;
+}
+
+/* Loading overlay */
+#loading-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(26, 26, 46, 0.9);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.spinner {
+    width: 50px;
+    height: 50px;
+    border: 3px solid #0f3460;
+    border-top-color: #e94560;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    #main-container {
+        flex-direction: column;
+    }
+
+    #sidebar {
+        width: 100%;
+        height: 40%;
+        border-right: none;
+        border-bottom: 1px solid #0f3460;
+    }
+
+    #map-container {
+        height: 60%;
+    }
+
+    #legend {
+        bottom: 10px;
+        right: 10px;
+        padding: 8px 12px;
+    }
+}

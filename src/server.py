@@ -1,0 +1,712 @@
+"""FastMCP server for site-fit generation.
+
+Exposes MCP tools for generating site layout solutions and integrates
+with FastAPI for static file serving (viewer).
+"""
+
+import asyncio
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from mcp.server.fastmcp import FastMCP
+
+from .tools.sitefit_tools import (
+    SiteFitRequest,
+    SiteFitResponse,
+    SolutionSummary,
+)
+from .pipeline import generate_site_fits
+from .models.rules import RuleSet
+
+# Path to static files
+STATIC_DIR = Path(__file__).parent.parent / "static"
+
+# Configure logging to stderr (required for MCP stdio transport)
+# stdio servers must NOT log to stdout as it interferes with JSON-RPC
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr,  # Critical: use stderr, not stdout
+)
+logger = logging.getLogger(__name__)
+
+# Create MCP server (following Python naming convention: {service}_mcp)
+mcp = FastMCP(
+    name="sitefit_mcp",
+    instructions="Generate multiple feasible site layouts for wastewater/biogas facilities. "
+    "Use sitefit_generate to create layouts, sitefit_get_solution for details, "
+    "and sitefit_list_solutions to paginate through results.",
+)
+
+# In-memory storage for jobs and solutions
+_jobs: Dict[str, Dict[str, Any]] = {}
+_solutions: Dict[str, Any] = {}
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,  # Creates and stores solutions
+        "destructiveHint": False,  # Does not delete existing data
+        "idempotentHint": True,  # Same seed produces same results
+        "openWorldHint": False,  # Does not call external services
+    }
+)
+async def sitefit_generate(
+    site_boundary: List[List[float]],
+    structures: List[Dict[str, Any]],
+    entrances: Optional[List[Dict[str, Any]]] = None,
+    keepouts: Optional[List[Dict[str, Any]]] = None,
+    sfiles2: Optional[str] = None,
+    rules_override: Optional[Dict[str, Any]] = None,
+    max_solutions: int = 5,
+    max_time_seconds: float = 60.0,
+    seed: int = 42,
+) -> Dict[str, Any]:
+    """Generate site layout solutions for wastewater/biogas facilities.
+
+    Creates multiple diverse placement solutions using constraint programming
+    (OR-Tools CP-SAT) with Shapely geometry validation and A* road routing.
+
+    Args:
+        site_boundary: Site boundary polygon as [[x,y], ...] coordinates (meters)
+        structures: List of structures with id, type, footprint {shape, w, h or d}
+        entrances: Site entrances with {id, point: [x,y], width}
+        keepouts: Keep-out zones with {id, geometry: GeoJSON, reason}
+        sfiles2: Optional SFILES2 string for process topology constraints
+        rules_override: Optional rule overrides for setbacks/clearances
+        max_solutions: Maximum solutions to return (1-50, default 5)
+        max_time_seconds: Maximum solve time (5-600 seconds, default 60)
+        seed: Random seed for reproducibility (default 42)
+
+    Returns:
+        Dict with job_id, status, num_solutions, solutions list, and statistics
+    """
+    # Build request
+    request = SiteFitRequest(
+        site={
+            "boundary": site_boundary,
+            "entrances": entrances or [],
+            "keepouts": keepouts or [],
+            "existing": [],
+        },
+        topology={"sfiles2": sfiles2} if sfiles2 else None,
+        program={"structures": structures},
+        rules_override=rules_override,
+        generation={
+            "max_solutions": max_solutions,
+            "max_time_seconds": max_time_seconds,
+            "seed": seed,
+        },
+    )
+
+    # Run generation
+    try:
+        solutions, stats = await generate_site_fits(request)
+
+        # Store solutions
+        job_id = stats.get("job_id", "unknown")
+        _jobs[job_id] = {
+            "status": "completed",
+            "stats": stats,
+            "solution_ids": [s.id for s in solutions],
+        }
+
+        for sol in solutions:
+            _solutions[sol.id] = sol.model_dump()
+
+        # Build response
+        return {
+            "job_id": job_id,
+            "status": "completed",
+            "num_solutions": len(solutions),
+            "solutions": [
+                {
+                    "id": s.id,
+                    "rank": s.rank,
+                    "metrics": s.metrics.model_dump(),
+                    "diversity_note": s.diversity_note,
+                }
+                for s in solutions
+            ],
+            "statistics": stats,
+        }
+
+    except Exception as e:
+        logger.exception("Generation failed")
+        return {
+            "isError": True,
+            "job_id": "error",
+            "status": "failed",
+            "error": str(e),
+            "suggestion": "Check site_boundary is a valid closed polygon and structures have valid footprints",
+            "num_solutions": 0,
+            "solutions": [],
+            "statistics": {},
+        }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,  # Only reads stored data
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_get_solution(
+    solution_id: str,
+    include_geojson: bool = True,
+) -> Dict[str, Any]:
+    """Get full details of a specific solution by ID.
+
+    Retrieves placement coordinates, metrics, road network, and optional
+    GeoJSON feature collection for visualization.
+
+    Args:
+        solution_id: Solution ID from sitefit_generate response
+        include_geojson: Include GeoJSON feature collection (default True)
+
+    Returns:
+        Full solution with placements, metrics, road_network, and features_geojson
+    """
+    if solution_id not in _solutions:
+        return {
+            "isError": True,
+            "error": f"Solution {solution_id} not found",
+            "suggestion": "Use sitefit_list_solutions to get valid solution IDs from a job",
+        }
+
+    solution = _solutions[solution_id]
+
+    if not include_geojson and "features_geojson" in solution:
+        # Return without GeoJSON for smaller response
+        result = {k: v for k, v in solution.items() if k != "features_geojson"}
+        return result
+
+    return solution
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_list_solutions(
+    job_id: str,
+    limit: int = 20,
+    offset: int = 0,
+) -> Dict[str, Any]:
+    """List solutions for a job with pagination.
+
+    Returns summaries (id, rank, metrics) for quick browsing.
+    Use sitefit_get_solution for full details.
+
+    Args:
+        job_id: Job ID from sitefit_generate
+        limit: Maximum solutions to return (default 20)
+        offset: Offset for pagination (default 0)
+
+    Returns:
+        Dict with job_id, total, offset, limit, solutions, has_more, next_offset
+    """
+    if job_id not in _jobs:
+        return {
+            "isError": True,
+            "error": f"Job {job_id} not found",
+            "suggestion": "Use sitefit_generate to create a job first",
+            "solutions": [],
+        }
+
+    job = _jobs[job_id]
+    solution_ids = job.get("solution_ids", [])
+
+    # Apply pagination
+    paginated_ids = solution_ids[offset : offset + limit]
+
+    solutions = []
+    for sol_id in paginated_ids:
+        if sol_id in _solutions:
+            sol = _solutions[sol_id]
+            solutions.append({
+                "id": sol["id"],
+                "rank": sol["rank"],
+                "metrics": sol.get("metrics", {}),
+                "diversity_note": sol.get("diversity_note"),
+            })
+
+    total = len(solution_ids)
+    has_more = offset + limit < total
+
+    return {
+        "job_id": job_id,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "count": len(solutions),
+        "solutions": solutions,
+        "has_more": has_more,
+        "next_offset": offset + limit if has_more else None,
+    }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_job_status(
+    job_id: str,
+) -> Dict[str, Any]:
+    """Get the status of a site-fit generation job.
+
+    Check if a job is queued, running, completed, or failed.
+    For completed jobs, includes solution count and summary statistics.
+
+    Args:
+        job_id: Job ID from sitefit_generate
+
+    Returns:
+        Dict with job_id, status, progress (0-100), and job details
+    """
+    if job_id not in _jobs:
+        return {
+            "isError": True,
+            "error": f"Job {job_id} not found",
+            "suggestion": "Use sitefit_generate to create a job first",
+        }
+
+    job = _jobs[job_id]
+    status = job.get("status", "unknown")
+    stats = job.get("stats", {})
+
+    result = {
+        "job_id": job_id,
+        "status": status,
+        "progress": 100 if status == "completed" else (0 if status == "failed" else 50),
+    }
+
+    if status == "completed":
+        result["num_solutions"] = len(job.get("solution_ids", []))
+        result["statistics"] = {
+            "cpsat_solutions": stats.get("cpsat_solutions", 0),
+            "validated_solutions": stats.get("validated_solutions", 0),
+            "total_time_seconds": stats.get("total_time_seconds", 0),
+        }
+    elif status == "failed":
+        result["error"] = job.get("error", "Unknown error")
+
+    return result
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,  # Only reads and formats existing data
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_export(
+    solution_id: str,
+    format: str = "geojson",
+) -> Dict[str, Any]:
+    """Export a solution to various formats.
+
+    Converts solution data to GeoJSON, SVG, or summary formats
+    for use in external tools and viewers.
+
+    Args:
+        solution_id: Solution ID from sitefit_generate
+        format: Export format - 'geojson', 'svg', or 'summary' (default: geojson)
+
+    Returns:
+        Dict with format, data (content), and metadata
+    """
+    if solution_id not in _solutions:
+        return {
+            "isError": True,
+            "error": f"Solution {solution_id} not found",
+            "suggestion": "Use sitefit_list_solutions to get valid solution IDs",
+        }
+
+    solution = _solutions[solution_id]
+    format = format.lower()
+
+    if format == "geojson":
+        return {
+            "format": "geojson",
+            "content_type": "application/geo+json",
+            "data": solution.get("features_geojson", {}),
+            "metadata": {
+                "solution_id": solution_id,
+                "rank": solution.get("rank"),
+            },
+        }
+
+    elif format == "svg":
+        # Use SVG export module
+        try:
+            from .export.svg import export_solution_to_svg
+            from .models.solution import SiteFitSolution
+            from shapely.geometry import Polygon
+
+            # Reconstruct solution object
+            sol = SiteFitSolution(**solution)
+
+            # Get boundary from GeoJSON
+            boundary_feature = next(
+                (f for f in solution.get("features_geojson", {}).get("features", [])
+                 if f.get("properties", {}).get("kind") == "boundary"),
+                None
+            )
+
+            if boundary_feature:
+                boundary = Polygon(boundary_feature["geometry"]["coordinates"][0])
+            else:
+                # Fallback to bounding box of all features
+                boundary = Polygon([[0, 0], [200, 0], [200, 150], [0, 150], [0, 0]])
+
+            svg_content = export_solution_to_svg(
+                solution=sol,
+                boundary=boundary,
+                show_labels=True,
+                show_roads=True,
+            )
+
+            return {
+                "format": "svg",
+                "content_type": "image/svg+xml",
+                "data": svg_content,
+                "metadata": {
+                    "solution_id": solution_id,
+                    "rank": solution.get("rank"),
+                },
+            }
+        except Exception as e:
+            logger.exception("SVG export failed")
+            return {
+                "isError": True,
+                "error": f"SVG export failed: {str(e)}",
+                "suggestion": "Try exporting as 'geojson' instead",
+            }
+
+    elif format == "summary":
+        metrics = solution.get("metrics", {})
+        placements = solution.get("placements", [])
+
+        return {
+            "format": "summary",
+            "content_type": "application/json",
+            "data": {
+                "solution_id": solution_id,
+                "rank": solution.get("rank"),
+                "num_structures": len(placements),
+                "metrics": metrics,
+                "diversity_note": solution.get("diversity_note"),
+                "has_road_network": solution.get("road_network") is not None,
+                "structure_ids": [p.get("structure_id") for p in placements],
+            },
+            "metadata": {
+                "solution_id": solution_id,
+            },
+        }
+
+    else:
+        return {
+            "isError": True,
+            "error": f"Unknown format '{format}'",
+            "suggestion": "Valid formats are: 'geojson', 'svg', 'summary'",
+        }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def ruleset_list() -> Dict[str, Any]:
+    """List available rulesets for site layout generation.
+
+    Returns names and descriptions of available engineering rule configurations.
+
+    Returns:
+        Dict with rulesets array containing {name, description} objects
+    """
+    # For now, just return the default ruleset
+    return {
+        "rulesets": [
+            {
+                "name": "default",
+                "description": "Default engineering rules for wastewater facilities",
+            }
+        ]
+    }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def ruleset_get(
+    name: str = "default",
+) -> Dict[str, Any]:
+    """Get a ruleset configuration and JSON schema.
+
+    Returns the full ruleset with setback/clearance values and the
+    JSON schema for validation and UI generation.
+
+    Args:
+        name: Ruleset name (currently only 'default' available)
+
+    Returns:
+        Dict with name, rules (configuration), and schema (JSON Schema)
+    """
+    if name != "default":
+        return {
+            "isError": True,
+            "error": f"Ruleset '{name}' not found",
+            "suggestion": "Use ruleset_list to see available rulesets (currently only 'default')",
+        }
+
+    rules = RuleSet()
+    return {
+        "name": name,
+        "rules": rules.model_dump(),
+        "schema": rules.model_json_schema(),
+    }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,  # Only parses, doesn't store
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def topology_parse_sfiles2(
+    sfiles2: str,
+) -> Dict[str, Any]:
+    """Parse and validate an SFILES2 process topology string.
+
+    Tokenizes the SFILES2 notation and extracts nodes (equipment) and
+    edges (connections) for validation before use in sitefit_generate.
+
+    Args:
+        sfiles2: SFILES2 string (e.g., "(influent)pump|P-101(tank)T-101")
+
+    Returns:
+        Dict with valid (bool), nodes, edges, tokens, num_nodes, num_edges.
+        If invalid, includes error message.
+    """
+    from .topology.sfiles_parser import parse_sfiles_topology, tokenize_sfiles
+
+    try:
+        topology = parse_sfiles_topology(sfiles2)
+        tokens = tokenize_sfiles(sfiles2)
+
+        return {
+            "valid": True,
+            "nodes": [n.model_dump() for n in topology.nodes],
+            "edges": [e.model_dump() for e in topology.edges],
+            "tokens": tokens,
+            "num_nodes": len(topology.nodes),
+            "num_edges": len(topology.edges),
+        }
+    except Exception as e:
+        return {
+            "valid": False,
+            "error": str(e),
+            "nodes": [],
+            "edges": [],
+        }
+
+
+def run_server():
+    """Run the MCP server (MCP transport only)."""
+    import asyncio
+
+    asyncio.run(mcp.run())
+
+
+def run_with_static_server(host: str = "0.0.0.0", port: int = 8765):
+    """Run MCP server with static file serving via FastAPI.
+
+    This mode serves:
+    - MCP endpoints at /mcp (SSE transport)
+    - REST API at /api/* (for viewer)
+    - Static viewer files at /
+
+    Args:
+        host: Host to bind to
+        port: Port to listen on
+    """
+    from fastapi import FastAPI, HTTPException
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.middleware.cors import CORSMiddleware
+    from starlette.responses import FileResponse, JSONResponse
+    import uvicorn
+
+    # Create FastAPI app
+    app = FastAPI(
+        title="Site-Fit MCP Server",
+        description="Generate site layouts for wastewater/biogas facilities",
+        version="0.1.0",
+    )
+
+    # Add CORS middleware for development
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Mount MCP SSE endpoint
+    app.mount("/mcp", mcp.sse_app())
+
+    # ========================================================================
+    # REST API endpoints for viewer
+    # ========================================================================
+
+    @app.get("/api/jobs")
+    async def api_list_jobs():
+        """List all jobs."""
+        jobs_list = []
+        for job_id, job in _jobs.items():
+            jobs_list.append({
+                "job_id": job_id,
+                "status": job.get("status", "unknown"),
+                "num_solutions": len(job.get("solution_ids", [])),
+            })
+        return {"jobs": jobs_list}
+
+    @app.get("/api/jobs/{job_id}")
+    async def api_get_job(job_id: str):
+        """Get job status and details."""
+        result = await sitefit_job_status(job_id)
+        if result.get("isError"):
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+
+    @app.get("/api/jobs/{job_id}/solutions")
+    async def api_list_solutions(job_id: str, limit: int = 50, offset: int = 0):
+        """List solutions for a job."""
+        result = await sitefit_list_solutions(job_id, limit, offset)
+        if result.get("isError"):
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+
+    @app.get("/api/solutions/{solution_id}")
+    async def api_get_solution(solution_id: str, include_geojson: bool = True):
+        """Get full solution details."""
+        result = await sitefit_get_solution(solution_id, include_geojson)
+        if result.get("isError"):
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+
+    @app.get("/api/solutions/{solution_id}/export/{format}")
+    async def api_export_solution(solution_id: str, format: str):
+        """Export solution to various formats."""
+        result = await sitefit_export(solution_id, format)
+        if result.get("isError"):
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+
+    @app.post("/api/generate")
+    async def api_generate(request: dict):
+        """Generate site layouts (REST wrapper for MCP tool)."""
+        try:
+            result = await sitefit_generate(
+                site_boundary=request.get("site_boundary", []),
+                structures=request.get("structures", []),
+                entrances=request.get("entrances"),
+                keepouts=request.get("keepouts"),
+                sfiles2=request.get("sfiles2"),
+                rules_override=request.get("rules_override"),
+                max_solutions=request.get("max_solutions", 5),
+                max_time_seconds=request.get("max_time_seconds", 60.0),
+                seed=request.get("seed", 42),
+            )
+            if result.get("isError"):
+                raise HTTPException(status_code=400, detail=result["error"])
+            return result
+        except Exception as e:
+            logger.exception("API generate failed")
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # ========================================================================
+    # Static file serving (must come after API routes)
+    # ========================================================================
+
+    if STATIC_DIR.exists():
+        @app.get("/")
+        async def serve_index():
+            """Serve the main viewer page."""
+            return FileResponse(STATIC_DIR / "index.html")
+
+        # Serve static files directly (CSS, JS)
+        @app.get("/styles.css")
+        async def serve_styles():
+            return FileResponse(STATIC_DIR / "styles.css", media_type="text/css")
+
+        @app.get("/app.js")
+        async def serve_app_js():
+            return FileResponse(STATIC_DIR / "app.js", media_type="application/javascript")
+
+    logger.info(f"Starting Site-Fit server on http://{host}:{port}")
+    logger.info(f"  - Viewer:     http://{host}:{port}/")
+    logger.info(f"  - REST API:   http://{host}:{port}/api/")
+    logger.info(f"  - MCP (SSE):  http://{host}:{port}/mcp")
+
+    uvicorn.run(app, host=host, port=port)
+
+
+def main():
+    """Main entry point.
+
+    Supports different modes:
+    - Default: MCP stdio transport (for MCP clients)
+    - --serve: HTTP server with static files and MCP SSE
+    """
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--serve":
+        # Parse optional host:port
+        host = "0.0.0.0"
+        port = 8765
+
+        if len(sys.argv) > 2:
+            addr = sys.argv[2]
+            if ":" in addr:
+                host, port_str = addr.split(":", 1)
+                port = int(port_str)
+            else:
+                port = int(addr)
+
+        run_with_static_server(host, port)
+    else:
+        # Default: MCP stdio mode
+        run_server()
+
+
+if __name__ == "__main__":
+    main()
