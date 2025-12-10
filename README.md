@@ -66,6 +66,7 @@ Then open http://localhost:8765 in your browser.
 | `sitefit_list_solutions` | List solutions for a job with pagination |
 | `sitefit_job_status` | Get status and progress of a generation job |
 | `sitefit_export` | Export solution to GeoJSON, SVG, or summary format |
+| `sitefit_generate_from_request` | Generate from nested SiteFitRequest object |
 | `ruleset_list` | List available engineering rulesets |
 | `ruleset_get` | Get ruleset configuration and JSON schema |
 | `topology_parse_sfiles2` | Parse and validate SFILES2 topology strings |
@@ -134,6 +135,24 @@ Structures can specify vehicle access requirements:
   }
 }
 ```
+
+### Topology Node Mapping
+
+When using SFILES2 topology, you can map topology node IDs to structure IDs:
+```json
+{
+  "topology": {
+    "sfiles2": "(reactor)->(tank)->(pump)",
+    "node_map": {
+      "reactor-1": "RX-001",
+      "tank-1": "TK-001",
+      "pump-1": "PS-001"
+    }
+  }
+}
+```
+
+This allows topology-derived placement hints (flow direction, adjacency) to correctly apply to your structures.
 
 ## Engineering Rules
 
@@ -205,6 +224,16 @@ pytest tests/ -v
 ### Code Style
 
 The project uses standard Python formatting conventions.
+
+## Recent Updates
+
+### v0.1.0 (2025-12-10)
+- **SVG Export**: Fixed to work with Placement model (creates polygons from x/y/width/height)
+- **Ruleset Tools**: `ruleset_list` and `ruleset_get` now use YAML loader module
+- **Keepout Zones**: Added as road network obstacles (roads won't route through keepouts)
+- **Topology Mapping**: Added `node_map` field to link topology IDs to structure IDs
+- **GeoJSON Export**: Circles now export as true 32-segment polygons, not rectangles
+- **API Schema**: Added `sitefit_generate_from_request` tool for nested request objects
 
 ## License
 
