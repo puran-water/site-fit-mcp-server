@@ -124,6 +124,12 @@ class Placement(BaseModel):
     rotation_deg: int = Field(default=0, description="Rotation in degrees")
     width: float = Field(..., description="Actual width at current rotation")
     height: float = Field(..., description="Actual height at current rotation")
+    shape: str = Field(default="rect", description="Footprint shape: 'rect' or 'circle'")
+
+    @property
+    def is_circle(self) -> bool:
+        """Check if this is a circular structure."""
+        return self.shape == "circle"
 
     def get_bounds(self) -> Tuple[float, float, float, float]:
         """Get axis-aligned bounding box (min_x, min_y, max_x, max_y)."""
@@ -134,6 +140,34 @@ class Placement(BaseModel):
             self.x + half_w,
             self.y + half_h,
         )
+
+    def to_geojson_geometry(self) -> Dict[str, Any]:
+        """Convert to GeoJSON geometry (circle as 32-point polygon, rect as 5-point polygon)."""
+        import math
+
+        if self.is_circle:
+            # Create circular polygon approximation
+            radius = self.width / 2
+            num_segments = 32
+            coords = []
+            for i in range(num_segments):
+                angle = 2 * math.pi * i / num_segments
+                px = self.x + radius * math.cos(angle)
+                py = self.y + radius * math.sin(angle)
+                coords.append([px, py])
+            coords.append(coords[0])  # Close the ring
+            return {"type": "Polygon", "coordinates": [coords]}
+        else:
+            # Rectangle
+            half_w, half_h = self.width / 2, self.height / 2
+            coords = [
+                [self.x - half_w, self.y - half_h],
+                [self.x + half_w, self.y - half_h],
+                [self.x + half_w, self.y + half_h],
+                [self.x - half_w, self.y + half_h],
+                [self.x - half_w, self.y - half_h],  # Close ring
+            ]
+            return {"type": "Polygon", "coordinates": [coords]}
 
 
 class SiteFitSolution(BaseModel):
@@ -182,22 +216,15 @@ class SiteFitSolution(BaseModel):
 
         features = []
 
-        # Structure placements as polygons
+        # Structure placements as polygons (circles as true circular polygons)
         for p in self.placements:
-            min_x, min_y, max_x, max_y = p.get_bounds()
-            coords = [
-                [min_x, min_y],
-                [max_x, min_y],
-                [max_x, max_y],
-                [min_x, max_y],
-                [min_x, min_y],  # Close ring
-            ]
             features.append({
                 "type": "Feature",
-                "geometry": {"type": "Polygon", "coordinates": [coords]},
+                "geometry": p.to_geojson_geometry(),
                 "properties": {
                     "id": p.structure_id,
                     "kind": "structure",
+                    "shape": p.shape,
                     "x": p.x,
                     "y": p.y,
                     "rotation": p.rotation_deg,

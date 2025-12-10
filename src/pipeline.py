@@ -146,6 +146,13 @@ async def generate_site_fits(
                 node_metadata=request.topology.node_metadata,
             )
             hints = compute_placement_hints(topology)
+
+            # Translate hints using node_map if provided
+            # This links topology node IDs (e.g., "reactor-1") to structure IDs (e.g., "RX-001")
+            if request.topology.node_map:
+                hints = hints.translate_with_node_map(request.topology.node_map)
+                stats["topology_node_map_used"] = True
+
             stats["topology_nodes"] = len(topology.nodes)
             stats["topology_edges"] = len(topology.edges)
         except Exception as e:
@@ -363,6 +370,7 @@ async def generate_site_fits(
                     rotation_deg=p.rotation_deg,
                     width=p.width,
                     height=p.height,
+                    shape=p.structure.footprint.shape,  # Preserve shape for GeoJSON
                 )
                 for p in entry.placements
             ],
@@ -472,23 +480,15 @@ def _generate_geojson(
             "properties": {"kind": "entrance", "id": ent.id},
         })
 
-    # Structures
+    # Structures (circles as true circular polygons, rectangles as 4-corner polygons)
     for p in solution.placements:
-        min_x, min_y = p.x - p.width / 2, p.y - p.height / 2
-        max_x, max_y = p.x + p.width / 2, p.y + p.height / 2
-        coords = [
-            [min_x, min_y],
-            [max_x, min_y],
-            [max_x, max_y],
-            [min_x, max_y],
-            [min_x, min_y],
-        ]
         features.append({
             "type": "Feature",
-            "geometry": {"type": "Polygon", "coordinates": [coords]},
+            "geometry": p.to_geojson_geometry(),
             "properties": {
                 "kind": "structure",
                 "id": p.structure_id,
+                "shape": p.shape,
                 "rotation": p.rotation_deg,
             },
         })
