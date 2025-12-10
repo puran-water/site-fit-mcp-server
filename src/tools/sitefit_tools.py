@@ -95,6 +95,10 @@ class TopologyInput(BaseModel):
         default=None,
         description="Additional metadata for topology nodes",
     )
+    node_map: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Mapping from topology node IDs to structure IDs (e.g., {'reactor-1': 'RX-001'})",
+    )
 
 
 class ProgramInput(BaseModel):

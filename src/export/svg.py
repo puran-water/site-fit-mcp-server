@@ -5,15 +5,50 @@ without requiring a full browser-based viewer.
 """
 
 import logging
-from typing import List, Optional, Tuple
+import math
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
 from shapely.geometry import Polygon, LineString, Point
 
-from ..models.solution import SiteFitSolution
-from ..models.structures import PlacedStructure
+from ..models.solution import SiteFitSolution, Placement
 
 logger = logging.getLogger(__name__)
+
+
+def _placement_to_polygon(placement: Placement) -> Polygon:
+    """Convert a Placement to a Shapely polygon.
+
+    Creates axis-aligned rectangle from placement dimensions.
+    For circles, creates a 32-segment polygon approximation.
+    """
+    half_w = placement.width / 2
+    half_h = placement.height / 2
+
+    # Check if this is a circle (width == height and structure type hints circle)
+    # We can't know for sure without the original footprint, so use rectangle
+    # which is correct for rectangles and a reasonable approximation for circles
+    if abs(placement.width - placement.height) < 0.01:
+        # Likely a circle - create circular polygon
+        radius = placement.width / 2
+        num_segments = 32
+        coords = []
+        for i in range(num_segments):
+            angle = 2 * math.pi * i / num_segments
+            x = placement.x + radius * math.cos(angle)
+            y = placement.y + radius * math.sin(angle)
+            coords.append((x, y))
+        coords.append(coords[0])  # Close the ring
+        return Polygon(coords)
+    else:
+        # Rectangle
+        return Polygon([
+            (placement.x - half_w, placement.y - half_h),
+            (placement.x + half_w, placement.y - half_h),
+            (placement.x + half_w, placement.y + half_h),
+            (placement.x - half_w, placement.y + half_h),
+            (placement.x - half_w, placement.y - half_h),  # Close the ring
+        ])
 
 # Default SVG styling
 DEFAULT_STYLES = {
@@ -185,8 +220,10 @@ def export_solution_to_svg(
 
     # Draw structures
     for placement in solution.placements:
-        footprint = placement.footprint_polygon
-        is_circle = placement.structure.footprint.shape == "circle"
+        # Convert placement to polygon (handles both rect and circle)
+        footprint = _placement_to_polygon(placement)
+        # Determine if circle by checking if width == height
+        is_circle = abs(placement.width - placement.height) < 0.01
         style_key = "structure_circle" if is_circle else "structure_rect"
         svg_parts.append(_polygon_to_svg(
             footprint, placement.structure_id, merged_styles[style_key]

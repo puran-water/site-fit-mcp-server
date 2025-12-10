@@ -39,6 +39,7 @@ class RoadNetworkBuilder:
         boundary: Polygon,
         rules: RuleSet,
         grid_resolution: float = 1.0,
+        keepouts: Optional[List[Polygon]] = None,
     ):
         """Initialize road network builder.
 
@@ -48,12 +49,14 @@ class RoadNetworkBuilder:
             boundary: Site boundary polygon
             rules: Engineering rules
             grid_resolution: Pathfinding grid resolution (meters)
+            keepouts: Optional keepout zones (used as obstacles in pathfinding)
         """
         self.structures = structures
         self.entrances = entrances
         self.boundary = boundary
         self.rules = rules
         self.grid_resolution = grid_resolution
+        self.keepouts = keepouts or []
 
         # Generate dock zones
         self.dock_zones = generate_dock_zones(structures)
@@ -66,12 +69,16 @@ class RoadNetworkBuilder:
 
         Ensures roads stay inside the site boundary by marking all cells
         outside the boundary as impassable obstacles.
+        Also marks keepout zones as obstacles.
         """
         # Get site bounds
         bounds = self.boundary.bounds
 
         # Collect obstacles (structures as polygons)
         obstacles = [s.to_shapely_polygon() for s in self.structures]
+
+        # Add keepout zones as obstacles (they should be impassable)
+        obstacles.extend(self.keepouts)
 
         # Create cost grid
         self.cost_grid = create_cost_grid(
@@ -501,6 +508,7 @@ def build_road_network_for_solution(
         boundary=boundary,
         rules=rules,
         grid_resolution=grid_resolution,
+        keepouts=keepouts,
     )
 
     network = builder.build_network()

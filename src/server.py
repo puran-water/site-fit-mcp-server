@@ -151,6 +151,85 @@ async def sitefit_generate(
 
 @mcp.tool(
     annotations={
+        "readOnlyHint": False,  # Creates and stores solutions
+        "destructiveHint": False,  # Does not delete existing data
+        "idempotentHint": True,  # Same seed produces same results
+        "openWorldHint": False,  # Does not call external services
+    }
+)
+async def sitefit_generate_from_request(
+    request: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Generate site layout solutions from a complete SiteFitRequest object.
+
+    Alternative to sitefit_generate that accepts the full nested request schema.
+    Useful when programmatically constructing requests or integrating with other systems.
+
+    Args:
+        request: Full SiteFitRequest object with site, program, topology, rules_override, generation
+
+    Returns:
+        Dict with job_id, status, num_solutions, solutions list, and statistics
+
+    Example request:
+        {
+            "site": {"boundary": [[0,0], [100,0], [100,80], [0,80], [0,0]], "entrances": [], "keepouts": []},
+            "program": {"structures": [{"id": "TK-001", "type": "tank", "footprint": {"shape": "circle", "d": 12}}]},
+            "topology": {"sfiles2": "(tank)", "node_map": {"tank": "TK-001"}},
+            "generation": {"max_solutions": 5, "seed": 42}
+        }
+    """
+    try:
+        # Validate and construct request
+        site_fit_request = SiteFitRequest(**request)
+
+        # Run generation
+        solutions, stats = await generate_site_fits(site_fit_request)
+
+        # Store solutions
+        job_id = stats.get("job_id", "unknown")
+        _jobs[job_id] = {
+            "status": "completed",
+            "stats": stats,
+            "solution_ids": [s.id for s in solutions],
+        }
+
+        for sol in solutions:
+            _solutions[sol.id] = sol.model_dump()
+
+        # Build response
+        return {
+            "job_id": job_id,
+            "status": "completed",
+            "num_solutions": len(solutions),
+            "solutions": [
+                {
+                    "id": s.id,
+                    "rank": s.rank,
+                    "metrics": s.metrics.model_dump(),
+                    "diversity_note": s.diversity_note,
+                }
+                for s in solutions
+            ],
+            "statistics": stats,
+        }
+
+    except Exception as e:
+        logger.exception("Generation failed")
+        return {
+            "isError": True,
+            "job_id": "error",
+            "status": "failed",
+            "error": str(e),
+            "suggestion": "Validate request matches SiteFitRequest schema",
+            "num_solutions": 0,
+            "solutions": [],
+            "statistics": {},
+        }
+
+
+@mcp.tool(
+    annotations={
         "readOnlyHint": True,  # Only reads stored data
         "destructiveHint": False,
         "idempotentHint": True,
@@ -445,15 +524,21 @@ async def ruleset_list() -> Dict[str, Any]:
     Returns:
         Dict with rulesets array containing {name, description} objects
     """
-    # For now, just return the default ruleset
-    return {
-        "rulesets": [
-            {
-                "name": "default",
-                "description": "Default engineering rules for wastewater facilities",
-            }
-        ]
-    }
+    from .rules.loader import list_rulesets
+
+    try:
+        rulesets = list_rulesets()
+        return {
+            "rulesets": rulesets,
+            "count": len(rulesets),
+        }
+    except Exception as e:
+        logger.exception("Failed to list rulesets")
+        return {
+            "isError": True,
+            "error": str(e),
+            "rulesets": [],
+        }
 
 
 @mcp.tool(
@@ -473,24 +558,33 @@ async def ruleset_get(
     JSON schema for validation and UI generation.
 
     Args:
-        name: Ruleset name (currently only 'default' available)
+        name: Ruleset name (use ruleset_list to see available options)
 
     Returns:
         Dict with name, rules (configuration), and schema (JSON Schema)
     """
-    if name != "default":
+    from .rules.loader import load_ruleset
+
+    try:
+        rules = load_ruleset(name)
+        return {
+            "name": name,
+            "rules": rules.model_dump(),
+            "schema": rules.model_json_schema(),
+        }
+    except FileNotFoundError:
         return {
             "isError": True,
             "error": f"Ruleset '{name}' not found",
-            "suggestion": "Use ruleset_list to see available rulesets (currently only 'default')",
+            "suggestion": "Use ruleset_list to see available rulesets",
         }
-
-    rules = RuleSet()
-    return {
-        "name": name,
-        "rules": rules.model_dump(),
-        "schema": rules.model_json_schema(),
-    }
+    except Exception as e:
+        logger.exception(f"Failed to load ruleset '{name}'")
+        return {
+            "isError": True,
+            "error": str(e),
+            "suggestion": "Check ruleset YAML syntax",
+        }
 
 
 @mcp.tool(

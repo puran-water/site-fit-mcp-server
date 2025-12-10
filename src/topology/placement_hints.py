@@ -104,6 +104,63 @@ class PlacementHints:
             return 1
         return max(self.target_ranks.values()) + 1
 
+    def translate_with_node_map(self, node_map: Dict[str, str]) -> "PlacementHints":
+        """Translate hints using a node_map from topology IDs to structure IDs.
+
+        Args:
+            node_map: Dict mapping topology node IDs to structure IDs
+                     (e.g., {'reactor-1': 'RX-001', 'tank-2': 'TK-002'})
+
+        Returns:
+            New PlacementHints with translated IDs
+        """
+        def translate(node_id: str) -> str:
+            return node_map.get(node_id, node_id)
+
+        translated = PlacementHints()
+
+        # Translate target_ranks
+        translated.target_ranks = {
+            translate(k): v for k, v in self.target_ranks.items()
+        }
+
+        # Translate adjacency_weights
+        translated.adjacency_weights = {
+            (translate(k[0]), translate(k[1])): v
+            for k, v in self.adjacency_weights.items()
+        }
+
+        # Translate flow_precedence
+        translated.flow_precedence = [
+            (translate(up), translate(down))
+            for up, down in self.flow_precedence
+        ]
+
+        # Translate cluster_assignments
+        translated.cluster_assignments = {
+            k: [translate(nid) for nid in v]
+            for k, v in self.cluster_assignments.items()
+        }
+
+        # Translate critical_path
+        translated.critical_path = [translate(nid) for nid in self.critical_path]
+
+        # Translate node_degrees
+        translated.node_degrees = {
+            translate(k): v for k, v in self.node_degrees.items()
+        }
+
+        # Translate scc_membership
+        translated.scc_membership = {
+            translate(k): v for k, v in self.scc_membership.items()
+        }
+
+        # Translate source_nodes and sink_nodes
+        translated.source_nodes = {translate(nid) for nid in self.source_nodes}
+        translated.sink_nodes = {translate(nid) for nid in self.sink_nodes}
+
+        return translated
+
 
 def compute_placement_hints(
     topology: TopologyGraph,
