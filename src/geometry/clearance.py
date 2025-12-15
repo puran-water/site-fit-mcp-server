@@ -122,33 +122,59 @@ def check_clearance_violations(
 def get_minimum_clearance(
     structure: PlacedStructure,
     other_structures: List[PlacedStructure],
+    use_strtree: bool = True,
 ) -> Tuple[float, Optional[str]]:
     """Get minimum clearance from structure to any other structure.
+
+    Uses STRtree spatial index for efficient nearest neighbor queries
+    when there are many structures.
 
     Args:
         structure: The structure to check
         other_structures: List of other structures
+        use_strtree: Use STRtree for large structure lists (default True)
 
     Returns:
         Tuple of (min_distance, closest_structure_id)
     """
-    if not other_structures:
+    # Filter out self from other_structures
+    filtered = [s for s in other_structures if s.structure_id != structure.structure_id]
+    if not filtered:
         return (float('inf'), None)
 
     geom = structure.to_shapely_polygon()
-    min_dist = float('inf')
-    closest_id = None
 
-    for other in other_structures:
-        if other.structure_id == structure.structure_id:
-            continue
-        other_geom = other.to_shapely_polygon()
-        dist = geom.distance(other_geom)
-        if dist < min_dist:
-            min_dist = dist
-            closest_id = other.structure_id
+    # For small lists, linear scan is faster than building STRtree
+    if not use_strtree or len(filtered) < 10:
+        min_dist = float('inf')
+        closest_id = None
+        for other in filtered:
+            other_geom = other.to_shapely_polygon()
+            dist = geom.distance(other_geom)
+            if dist < min_dist:
+                min_dist = dist
+                closest_id = other.structure_id
+        return (min_dist, closest_id)
 
-    return (min_dist, closest_id)
+    # Use STRtree for larger lists
+    geometries = []
+    id_map = {}
+    for s in filtered:
+        other_geom = s.to_shapely_polygon()
+        geometries.append(other_geom)
+        id_map[id(other_geom)] = s.structure_id
+
+    tree = STRtree(geometries)
+
+    # Find nearest geometry
+    nearest_geom = tree.nearest(geom)
+    if nearest_geom is None:
+        return (float('inf'), None)
+
+    nearest_id = id_map.get(id(nearest_geom))
+    dist = geom.distance(nearest_geom)
+
+    return (dist, nearest_id)
 
 
 def check_overlap(
@@ -157,6 +183,10 @@ def check_overlap(
 ) -> List[Tuple[str, str, float]]:
     """Check for overlapping structures.
 
+    Uses STRtree spatial index for efficient candidate filtering.
+    For n structures, reduces from O(n²) to O(n log n + k) where k is
+    the number of actual candidate pairs.
+
     Args:
         structures: List of placed structures
         tolerance: Intersection area threshold to consider overlap
@@ -164,17 +194,46 @@ def check_overlap(
     Returns:
         List of (id1, id2, overlap_area) tuples for overlapping pairs
     """
+    if len(structures) < 2:
+        return []
+
+    # Build geometries and spatial index
+    geometries = []
+    id_list = []
+    for s in structures:
+        geom = s.to_shapely_polygon()
+        geometries.append(geom)
+        id_list.append(s.structure_id)
+
+    tree = STRtree(geometries)
+
+    # Use STRtree to find overlapping pairs efficiently
     overlaps = []
+    checked_pairs: set = set()
 
-    geometries = [(s.structure_id, s.to_shapely_polygon()) for s in structures]
+    for i, geom1 in enumerate(geometries):
+        id1 = id_list[i]
 
-    for i, (id1, geom1) in enumerate(geometries):
-        for id2, geom2 in geometries[i + 1:]:
-            if geom1.intersects(geom2):
-                intersection = geom1.intersection(geom2)
-                overlap_area = intersection.area
-                if overlap_area > tolerance:
-                    overlaps.append((id1, id2, overlap_area))
+        # Query for geometries that intersect with geom1
+        candidate_indices = tree.query(geom1, predicate='intersects')
+
+        for j in candidate_indices:
+            if j <= i:  # Skip self and already-checked pairs
+                continue
+
+            pair_key = (i, j) if i < j else (j, i)
+            if pair_key in checked_pairs:
+                continue
+            checked_pairs.add(pair_key)
+
+            id2 = id_list[j]
+            geom2 = geometries[j]
+
+            # Compute actual intersection area
+            intersection = geom1.intersection(geom2)
+            overlap_area = intersection.area
+            if overlap_area > tolerance:
+                overlaps.append((id1, id2, overlap_area))
 
     return overlaps
 
