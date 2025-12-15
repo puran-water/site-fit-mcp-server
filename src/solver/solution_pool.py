@@ -45,6 +45,7 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
         self.max_solutions = max_solutions
 
         self._solutions: List[List[PlacedStructure]] = []
+        self._objectives: List[Optional[float]] = []
         self._solution_count = 0
 
     def on_solution_callback(self):
@@ -87,14 +88,36 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
 
         self._solutions.append(placements)
 
+        # Capture objective value for this solution
+        if self.model.HasObjective():
+            obj_val = self.ObjectiveValue()
+            self._objectives.append(obj_val)
+        else:
+            obj_val = None
+            self._objectives.append(None)
+
         logger.debug(
             f"Solution {self._solution_count}: "
-            f"objective={self.ObjectiveValue() if self.model.HasObjective() else 'N/A'}"
+            f"objective={obj_val if obj_val is not None else 'N/A'}"
         )
 
     def get_solutions(self) -> List[List[PlacedStructure]]:
         """Get all collected solutions."""
         return self._solutions
+
+    def get_solutions_with_objectives(
+        self,
+    ) -> List[Tuple[List[PlacedStructure], Optional[float]]]:
+        """Get all solutions paired with their objective values.
+
+        Returns:
+            List of (placements, objective_value) tuples
+        """
+        return list(zip(self._solutions, self._objectives))
+
+    def get_objectives(self) -> List[Optional[float]]:
+        """Get all objective values in order."""
+        return self._objectives
 
     @property
     def solution_count(self) -> int:
@@ -155,7 +178,8 @@ class SolutionPool:
         self._entries.append(entry)
 
         # Sort by objective (lower is better)
-        self._entries.sort(key=lambda e: e.objective_value or float('inf'))
+        # Use float('inf') only for None values; 0 is a valid best objective
+        self._entries.sort(key=lambda e: float('inf') if e.objective_value is None else e.objective_value)
 
         # Trim to max size
         if len(self._entries) > self.max_size:

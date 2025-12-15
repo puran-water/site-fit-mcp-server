@@ -17,19 +17,22 @@ logger = logging.getLogger(__name__)
 
 
 def _placement_to_polygon(placement: Placement) -> Polygon:
-    """Convert a Placement to a Shapely polygon.
+    """Convert a Placement to a Shapely polygon with rotation applied.
 
-    Creates axis-aligned rectangle from placement dimensions.
-    For circles, creates a 32-segment polygon approximation.
+    For circles: 32-segment polygon approximation (rotation has no effect)
+    For rectangles: Polygon with rotation applied for non-90° multiples
+
+    Note: For 90° multiples (0, 90, 180, 270), width/height are already
+    rotation-adjusted (swapped for 90/270), so no rotation matrix needed.
+    Only apply rotation matrix for arbitrary angles like 45°.
     """
-    half_w = placement.width / 2
-    half_h = placement.height / 2
+    # Check if this is a circle using the shape attribute
+    is_circle = placement.shape == "circle" or (
+        placement.shape == "rect" and abs(placement.width - placement.height) < 0.01
+    )
 
-    # Check if this is a circle (width == height and structure type hints circle)
-    # We can't know for sure without the original footprint, so use rectangle
-    # which is correct for rectangles and a reasonable approximation for circles
-    if abs(placement.width - placement.height) < 0.01:
-        # Likely a circle - create circular polygon
+    if is_circle:
+        # Circle - create circular polygon approximation
         radius = placement.width / 2
         num_segments = 32
         coords = []
@@ -41,14 +44,35 @@ def _placement_to_polygon(placement: Placement) -> Polygon:
         coords.append(coords[0])  # Close the ring
         return Polygon(coords)
     else:
-        # Rectangle
-        return Polygon([
-            (placement.x - half_w, placement.y - half_h),
-            (placement.x + half_w, placement.y - half_h),
-            (placement.x + half_w, placement.y + half_h),
-            (placement.x - half_w, placement.y + half_h),
-            (placement.x - half_w, placement.y - half_h),  # Close the ring
-        ])
+        # Rectangle - width/height already account for 90° multiples
+        half_w = placement.width / 2
+        half_h = placement.height / 2
+
+        # Base corners relative to center
+        corners = [
+            (-half_w, -half_h),
+            (half_w, -half_h),
+            (half_w, half_h),
+            (-half_w, half_h),
+        ]
+
+        # Only apply rotation matrix for non-90° multiples (e.g., 45°)
+        # For 0, 90, 180, 270: width/height swap already handles orientation
+        if placement.rotation_deg % 90 != 0:
+            angle_rad = math.radians(placement.rotation_deg)
+            cos_a = math.cos(angle_rad)
+            sin_a = math.sin(angle_rad)
+            # Rotation matrix: [cos θ, -sin θ; sin θ, cos θ]
+            corners = [
+                (cx * cos_a - cy * sin_a, cx * sin_a + cy * cos_a)
+                for cx, cy in corners
+            ]
+
+        # Translate to placement center
+        coords = [(placement.x + cx, placement.y + cy) for cx, cy in corners]
+        coords.append(coords[0])  # Close the ring
+
+        return Polygon(coords)
 
 # Default SVG styling
 DEFAULT_STYLES = {

@@ -191,7 +191,9 @@ class RoadNetworkBuilder:
                     end_id=dock.structure_id,
                 )
                 segments.append(segment)
-                segment_lines.append(LineString(result.path))
+                # Guard against degenerate paths (need >= 2 points for LineString)
+                if len(result.path) >= 2:
+                    segment_lines.append(LineString(result.path))
                 connected_docks.add(dock.structure_id)
             else:
                 logger.warning(

@@ -142,11 +142,19 @@ class Placement(BaseModel):
         )
 
     def to_geojson_geometry(self) -> Dict[str, Any]:
-        """Convert to GeoJSON geometry (circle as 32-point polygon, rect as 5-point polygon)."""
+        """Convert to GeoJSON geometry with rotation applied.
+
+        For circles: 32-point polygon approximation (rotation has no effect)
+        For rectangles: 5-point polygon with rotation applied for non-90° multiples
+
+        Note: For 90° multiples (0, 90, 180, 270), width/height are already
+        rotation-adjusted (swapped for 90/270), so no rotation matrix needed.
+        Only apply rotation matrix for arbitrary angles like 45°.
+        """
         import math
 
         if self.is_circle:
-            # Create circular polygon approximation
+            # Create circular polygon approximation (rotation doesn't affect circles)
             radius = self.width / 2
             num_segments = 32
             coords = []
@@ -158,15 +166,33 @@ class Placement(BaseModel):
             coords.append(coords[0])  # Close the ring
             return {"type": "Polygon", "coordinates": [coords]}
         else:
-            # Rectangle
+            # Rectangle - width/height already account for 90° multiples
             half_w, half_h = self.width / 2, self.height / 2
-            coords = [
-                [self.x - half_w, self.y - half_h],
-                [self.x + half_w, self.y - half_h],
-                [self.x + half_w, self.y + half_h],
-                [self.x - half_w, self.y + half_h],
-                [self.x - half_w, self.y - half_h],  # Close ring
+
+            # Base corners relative to center
+            corners = [
+                (-half_w, -half_h),
+                (half_w, -half_h),
+                (half_w, half_h),
+                (-half_w, half_h),
             ]
+
+            # Only apply rotation matrix for non-90° multiples (e.g., 45°)
+            # For 0, 90, 180, 270: width/height swap already handles orientation
+            if self.rotation_deg % 90 != 0:
+                angle_rad = math.radians(self.rotation_deg)
+                cos_a = math.cos(angle_rad)
+                sin_a = math.sin(angle_rad)
+                # Rotation matrix: [cos θ, -sin θ; sin θ, cos θ]
+                corners = [
+                    (cx * cos_a - cy * sin_a, cx * sin_a + cy * cos_a)
+                    for cx, cy in corners
+                ]
+
+            # Translate to placement center and format for GeoJSON
+            coords = [[self.x + cx, self.y + cy] for cx, cy in corners]
+            coords.append(coords[0])  # Close ring
+
             return {"type": "Polygon", "coordinates": [coords]}
 
 
