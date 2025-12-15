@@ -385,9 +385,10 @@ async def generate_site_fits(
             diversity_note=_generate_diversity_note(entry, diverse_entries, rank),
         )
 
-        # Generate GeoJSON
+        # Generate GeoJSON (with hazard zones if configured)
+        structure_types = {s.id: s.type for s in structures}
         solution.features_geojson = _generate_geojson(
-            solution, site_boundary, entrances
+            solution, site_boundary, entrances, rules, structure_types
         )
 
         final_solutions.append(solution)
@@ -466,8 +467,18 @@ def _generate_geojson(
     solution: SiteFitSolution,
     boundary: Polygon,
     entrances: List[Entrance],
+    rules: Optional[RuleSet] = None,
+    structure_types: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Generate full GeoJSON for solution visualization."""
+    """Generate full GeoJSON for solution visualization.
+
+    Args:
+        solution: SiteFitSolution with placements
+        boundary: Site boundary polygon
+        entrances: List of entrances
+        rules: Optional RuleSet for NFPA 820 zone computation
+        structure_types: Optional mapping of structure_id to equipment type
+    """
     features = []
 
     # Site boundary
@@ -485,6 +496,19 @@ def _generate_geojson(
             "geometry": {"type": "Point", "coordinates": list(ent.point)},
             "properties": {"kind": "entrance", "id": ent.id},
         })
+
+    # NFPA 820 hazard zones (if rules provided and zones configured)
+    if rules and rules.nfpa820_zones:
+        try:
+            from .hazards.nfpa820_zones import compute_hazard_zones
+            hazard_zones = compute_hazard_zones(
+                solution.placements, rules, structure_types
+            )
+            for zone in hazard_zones:
+                feature = zone.to_geojson_feature()
+                features.append(feature)
+        except ImportError:
+            logger.warning("Hazard zone module not available")
 
     # Structures (circles as true circular polygons, rectangles as 4-corner polygons)
     for p in solution.placements:

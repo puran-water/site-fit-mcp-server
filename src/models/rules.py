@@ -22,6 +22,20 @@ class AccessRules(BaseModel):
     )
 
 
+class NFPA820ZoneConfig(BaseModel):
+    """NFPA 820 hazardous area zone configuration for an equipment type."""
+
+    class_i_div_1_radius: float = Field(
+        default=0.0, ge=0, description="Class I Division 1 zone radius in meters"
+    )
+    class_i_div_2_radius: float = Field(
+        default=0.0, ge=0, description="Class I Division 2 zone radius in meters"
+    )
+    vertical_above: float = Field(
+        default=0.46, ge=0, description="Vertical extent above grade in meters (default 18 inches)"
+    )
+
+
 class SetbackRules(BaseModel):
     """Property line and boundary setback rules."""
 
@@ -101,6 +115,45 @@ class RuleSet(BaseModel):
     flow_direction_weight: float = Field(
         default=5.0, ge=0, description="Weight for honoring process flow direction"
     )
+
+    # NFPA 820 hazardous area zone configurations
+    nfpa820_zones: Dict[str, NFPA820ZoneConfig] = Field(
+        default_factory=dict,
+        description="NFPA 820 hazardous area zone radii by equipment type"
+    )
+
+    # Equipment types that must be outside hazard zones
+    hazard_zone_exclusions: List[str] = Field(
+        default_factory=lambda: [
+            "electrical_building",
+            "control_building",
+            "motor_control_center",
+            "office",
+            "laboratory",
+        ],
+        description="Equipment types that must be placed outside Class I hazard zones"
+    )
+
+    def get_nfpa820_zone(self, equipment_type: str) -> Optional[NFPA820ZoneConfig]:
+        """Get NFPA 820 zone configuration for an equipment type."""
+        # Check exact match first
+        if equipment_type in self.nfpa820_zones:
+            zone_data = self.nfpa820_zones[equipment_type]
+            if isinstance(zone_data, dict):
+                return NFPA820ZoneConfig(**zone_data)
+            return zone_data
+        # Check partial matches
+        for key, zone_data in self.nfpa820_zones.items():
+            if key in equipment_type or equipment_type in key:
+                if isinstance(zone_data, dict):
+                    return NFPA820ZoneConfig(**zone_data)
+                return zone_data
+        return None
+
+    def is_hazard_zone_exclusion(self, equipment_type: str) -> bool:
+        """Check if equipment type must be placed outside hazard zones."""
+        return any(excl in equipment_type or equipment_type in excl
+                   for excl in self.hazard_zone_exclusions)
 
     def get_equipment_to_boundary(self, equipment_type: str) -> float:
         """Get equipment-to-boundary setback for a type."""

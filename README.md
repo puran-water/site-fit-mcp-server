@@ -67,6 +67,8 @@ Then open http://localhost:8765 in your browser.
 | `sitefit_job_status` | Get status and progress of a generation job |
 | `sitefit_export` | Export solution to GeoJSON, SVG, or summary format |
 | `sitefit_generate_from_request` | Generate from nested SiteFitRequest object |
+| `sitefit_load_gis_file` | Load site boundary/keepouts/entrances from GIS files |
+| `sitefit_list_gis_layers` | List layers in a GIS file with metadata |
 | `ruleset_list` | List available engineering rulesets |
 | `ruleset_get` | Get ruleset configuration and JSON schema |
 | `topology_parse_sfiles2` | Parse and validate SFILES2 topology strings |
@@ -162,8 +164,44 @@ Default rules are defined in `src/rulesets/default.yaml`:
 - **Equipment setbacks**: Type-specific boundary distances (e.g., digesters: 15m)
 - **Equipment clearances**: Minimum distances between equipment types
 - **Access rules**: Road width (6m), turning radius (12m), dock depth (15m)
+- **NFPA 820 hazard zones**: Hazardous area classifications for biogas facilities
 
 Override rules via the `rules_override` parameter in `sitefit_generate`.
+
+### NFPA 820 Hazardous Area Zones
+
+Site-fit automatically generates NFPA 820 hazardous area classifications for wastewater and biogas facilities. These zones are included in the GeoJSON export.
+
+**Zone Classifications:**
+- **Class I, Division 1**: Ignitable concentrations exist under normal conditions
+- **Class I, Division 2**: Ignitable concentrations may exist under abnormal conditions
+
+**Default Zone Radii (configurable in ruleset):**
+
+| Equipment Type | Class I Div 1 | Class I Div 2 |
+|----------------|---------------|---------------|
+| Digester | Interior only | 3.0m (10 ft) |
+| Wet well | Interior only | 3.0m (10 ft) |
+| Digester gas piping | 1.5m (5 ft) | 3.0m (10 ft) |
+| Covered clarifier | Interior only | 3.0m (10 ft) |
+| Odor control | - | 0.9m (3 ft) |
+| Flare | 1.5m (5 ft) | 4.5m (15 ft) |
+
+**Excluded Equipment:**
+Electrical buildings, control buildings, motor control centers, offices, and laboratories must be placed outside hazard zones.
+
+**Override Example:**
+```json
+{
+  "rules_override": {
+    "nfpa820_zones": {
+      "digester": {
+        "class_i_div_2_radius": 5.0
+      }
+    }
+  }
+}
+```
 
 ## Architecture
 
@@ -174,13 +212,13 @@ src/
 ├── models/                # Pydantic schemas
 │   ├── site.py           # Site, Boundary, Keepout, Entrance
 │   ├── structures.py     # Structure footprints, access requirements
-│   ├── rules.py          # Setback/clearance rule schemas
+│   ├── rules.py          # Setback/clearance rule schemas + NFPA 820
 │   ├── topology.py       # SFILES topology wrapper
 │   └── solution.py       # SiteFitSolution, metrics, GeoJSON
 ├── geometry/              # Geometry operations
 │   ├── polygon_ops.py    # Shapely/pyclipper wrappers
 │   ├── containment.py    # Boundary containment checks
-│   └── clearance.py      # Pairwise distance calculations
+│   └── clearance.py      # Pairwise distance calculations (STRtree optimized)
 ├── solver/                # OR-Tools CP-SAT solver
 │   ├── cpsat_placer.py   # Placement solver with NoOverlap2D
 │   ├── solution_pool.py  # Multi-solution enumeration
@@ -192,9 +230,15 @@ src/
 ├── roads/                 # Road network generation
 │   ├── dock_zones.py     # Access dock generation
 │   ├── pathfinder.py     # A* road routing
-│   └── network.py        # Road network validation
+│   └── network.py        # Road network validation (Steiner tree optimized)
+├── hazards/               # Safety zone calculations
+│   └── nfpa820_zones.py  # NFPA 820 hazardous area classification
+├── loaders/               # File format loaders
+│   └── gis_loader.py     # Shapefile/GeoPackage/GeoJSON import
 ├── rules/                 # Rule management
 │   └── loader.py         # YAML ruleset loading and merging
+├── rulesets/              # Ruleset definitions
+│   └── default.yaml      # Default engineering rules
 ├── export/                # Export utilities
 │   ├── geojson.py        # GeoJSON FeatureCollection export
 │   └── svg.py            # SVG preview generation
@@ -224,6 +268,86 @@ pytest tests/ -v
 ### Code Style
 
 The project uses standard Python formatting conventions.
+
+## GIS Integration
+
+### Loading Solutions in QGIS
+
+Site-fit exports solutions as GeoJSON, which can be directly loaded into QGIS for visualization and analysis:
+
+```python
+# PyQGIS script to load site-fit solution
+from qgis.core import QgsVectorLayer, QgsProject
+
+# Load the exported GeoJSON
+layer = QgsVectorLayer("/path/to/solution.geojson", "Site Layout", "ogr")
+
+# Add to project
+if layer.isValid():
+    QgsProject.instance().addMapLayer(layer)
+else:
+    print("Failed to load layer")
+```
+
+Or simply drag and drop the `.geojson` file into QGIS.
+
+**Layer Styling Tips:**
+- Use categorized symbology on the `feature_type` property to distinguish structures, roads, and boundary
+- Enable labels using the `id` property for structure identification
+- Set road features to line symbology with appropriate width (6m default)
+
+### Coordinate Reference System
+
+Site-fit uses a local coordinate system in meters. When loading into QGIS:
+1. Set the project CRS to a local projected CRS (e.g., UTM zone for your area)
+2. Or use a generic meters-based CRS like EPSG:3857 for visualization only
+
+For georeferenced outputs, transform the GeoJSON coordinates to your target CRS before loading.
+
+### Importing from GIS Files
+
+Site-fit can directly import site boundaries, keepouts, and entrances from various GIS formats:
+
+**Supported Formats:**
+- Shapefile (.shp)
+- GeoJSON (.geojson, .json)
+- GeoPackage (.gpkg)
+- KML (.kml)
+- File Geodatabase (.gdb)
+
+**Installation:**
+```bash
+pip install 'site-fit-mcp[gis]'
+```
+
+**Usage via MCP:**
+```python
+# List layers in a file
+result = await sitefit_list_gis_layers("/path/to/parcel.shp")
+print(result["layers"])
+
+# Load site data
+site_data = await sitefit_load_gis_file(
+    file_path="/path/to/parcel.shp",
+    boundary_layer=None,  # Auto-detect
+    keepout_layers=None,  # Auto-detect from names like "easement", "wetland"
+    target_crs="EPSG:32632",  # Optional CRS transformation
+)
+
+# Use loaded data with sitefit_generate
+solutions = await sitefit_generate(
+    site_boundary=site_data["boundary"],
+    keepouts=site_data["keepouts"],
+    entrances=site_data["entrances"],
+    structures=[...]
+)
+```
+
+**Auto-Detection:**
+Layer auto-detection uses naming conventions:
+- **Boundary**: "boundary", "parcel", "lot", "property", "site"
+- **Keepouts**: "keepout", "easement", "wetland", "flood", "buffer", "setback"
+- **Entrances**: "entrance", "access", "gate", "driveway"
 
 ## Recent Updates
 

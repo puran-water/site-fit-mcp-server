@@ -1,12 +1,15 @@
 """GeoJSON export utilities for site-fit solutions."""
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from shapely.geometry import Polygon, Point, LineString, mapping
 
 from ..models.solution import SiteFitSolution, Placement, RoadNetwork, RoadSegment
 from ..models.structures import PlacedStructure
 from ..models.site import SiteBoundary, Entrance, Keepout
+
+if TYPE_CHECKING:
+    from ..hazards.nfpa820_zones import HazardZone
 
 
 def solution_to_geojson(
@@ -15,6 +18,7 @@ def solution_to_geojson(
     entrances: Optional[List[Entrance]] = None,
     keepouts: Optional[List[Keepout]] = None,
     include_labels: bool = True,
+    hazard_zones: Optional[List["HazardZone"]] = None,
 ) -> Dict[str, Any]:
     """Convert a complete solution to GeoJSON FeatureCollection.
 
@@ -24,6 +28,7 @@ def solution_to_geojson(
         entrances: Optional list of entrances
         keepouts: Optional list of keepout zones
         include_labels: Include label points for structures
+        hazard_zones: Optional list of NFPA 820 hazard zones
 
     Returns:
         GeoJSON FeatureCollection dict
@@ -76,6 +81,13 @@ def solution_to_geojson(
                     "layer": "site",
                 },
             })
+
+    # Add NFPA 820 hazard zones
+    if hazard_zones:
+        for zone in hazard_zones:
+            feature = zone.to_geojson_feature()
+            feature["properties"]["layer"] = "hazard_zones"
+            features.append(feature)
 
     # Add structure placements
     for p in solution.placements:
