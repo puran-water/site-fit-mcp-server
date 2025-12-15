@@ -287,6 +287,11 @@ def _astar(
     Returns:
         List of grid cells forming path, or None if no path
     """
+    # Handle trivial case: start equals end
+    # Return 2-point path to ensure valid LineString creation
+    if start == end:
+        return [start, end]
+
     # Neighbors: 4-directional or 8-directional
     if allow_diagonal:
         neighbors = [

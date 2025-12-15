@@ -212,31 +212,18 @@ def road_network_to_features(network: RoadNetwork) -> List[Dict[str, Any]]:
 def _placement_to_feature(placement: Placement) -> Dict[str, Any]:
     """Convert a Placement to GeoJSON Feature.
 
+    Delegates to the Placement's to_geojson_geometry() method which
+    handles circles, rectangles, and rotation correctly.
+
     Args:
         placement: Placement object
 
     Returns:
         GeoJSON Feature dict
     """
-    min_x = placement.x - placement.width / 2
-    max_x = placement.x + placement.width / 2
-    min_y = placement.y - placement.height / 2
-    max_y = placement.y + placement.height / 2
-
-    coords = [
-        [min_x, min_y],
-        [max_x, min_y],
-        [max_x, max_y],
-        [min_x, max_y],
-        [min_x, min_y],  # Close ring
-    ]
-
     return {
         "type": "Feature",
-        "geometry": {
-            "type": "Polygon",
-            "coordinates": [coords],
-        },
+        "geometry": placement.to_geojson_geometry(),
         "properties": {
             "kind": "structure",
             "id": placement.structure_id,
@@ -245,6 +232,7 @@ def _placement_to_feature(placement: Placement) -> Dict[str, Any]:
             "rotation": placement.rotation_deg,
             "width": placement.width,
             "height": placement.height,
+            "shape": placement.shape,
             "layer": "structures",
         },
     }

@@ -16,8 +16,8 @@ from ..models.rules import RuleSet
 
 logger = logging.getLogger(__name__)
 
-# Default rulesets directory (relative to package root)
-RULESETS_DIR = Path(__file__).parent.parent.parent / "rulesets"
+# Default rulesets directory (inside src/ package for proper wheel packaging)
+RULESETS_DIR = Path(__file__).parent.parent / "rulesets"
 
 
 def get_ruleset_path(name: str = "default") -> Path:

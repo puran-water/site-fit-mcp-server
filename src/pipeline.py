@@ -20,6 +20,7 @@ from shapely.geometry import Polygon
 from .models.site import SiteBoundary, Entrance, Keepout
 from .models.structures import StructureFootprint, PlacedStructure, RectFootprint, CircleFootprint
 from .models.rules import RuleSet
+from .rules.loader import load_ruleset
 from .models.solution import SiteFitSolution, SolutionMetrics, Placement
 from .models.topology import TopologyGraph
 from .geometry.polygon_ops import compute_buildable_area, polygon_from_coords
@@ -162,8 +163,8 @@ async def generate_site_fits(
     # PHASE 3: Compute buildable area
     report_progress("Computing buildable area...", 15)
 
-    # Load rules with overrides
-    rules = RuleSet()
+    # Load rules from YAML with optional overrides
+    rules = load_ruleset("default")
     if request.rules_override:
         rules = rules.merge_override(request.rules_override)
 
@@ -217,12 +218,17 @@ async def generate_site_fits(
     # Build structure type lookup for boundary setbacks
     structure_types = {s.id: s.type for s in structures}
 
-    validated = []
+    validated = []  # List of (placements, objective_value) tuples
     containment_rejects = 0
     clearance_rejects = 0
     boundary_setback_rejects = 0
 
+    # Get per-solution objectives (may be empty if solver didn't track them)
+    sol_objectives = solver_result.solution_objectives or []
+
     for i, placements in enumerate(solver_result.solutions):
+        # Get objective for this solution (if available)
+        objective = sol_objectives[i] if i < len(sol_objectives) else None
         solution_valid = True
 
         # 5a. Check each placement is fully inside buildable area
@@ -266,7 +272,7 @@ async def generate_site_fits(
             clearance_rejects += 1
             continue
 
-        validated.append(placements)
+        validated.append((placements, objective))
 
         if len(validated) >= request.generation.max_solutions * 2:
             break
@@ -289,9 +295,9 @@ async def generate_site_fits(
     # PHASE 6: Generate road networks
     report_progress("Generating road networks...", 65)
 
-    solutions_with_roads = []
+    solutions_with_roads = []  # List of (placements, road_network, objective) tuples
     road_generation_failures = 0
-    for i, placements in enumerate(validated):
+    for i, (placements, objective) in enumerate(validated):
         if request.generation.require_road_access and entrances:
             road_network = build_road_network_for_solution(
                 placements=placements,
@@ -309,7 +315,7 @@ async def generate_site_fits(
         else:
             road_network = None
 
-        solutions_with_roads.append((placements, road_network))
+        solutions_with_roads.append((placements, road_network, objective))
 
         report_progress(
             f"Generated roads for {len(solutions_with_roads)} solutions",
@@ -326,10 +332,10 @@ async def generate_site_fits(
     # PHASE 7: Diversity filtering
     report_progress("Selecting diverse solutions...", 80)
 
-    # Create solution pool
+    # Create solution pool with objective values for proper ranking
     pool = SolutionPool(max_size=len(solutions_with_roads))
-    for placements, road_network in solutions_with_roads:
-        pool.add(placements)
+    for placements, road_network, objective in solutions_with_roads:
+        pool.add(placements, objective_value=objective)
 
     # Compute fingerprints and filter
     for entry in pool:
@@ -349,7 +355,7 @@ async def generate_site_fits(
     for rank, entry in enumerate(diverse_entries):
         # Find matching road network
         road_network = None
-        for placements, rn in solutions_with_roads:
+        for placements, rn, _obj in solutions_with_roads:
             if placements == entry.placements:
                 road_network = rn
                 break

@@ -82,6 +82,7 @@ class SolverResult:
     num_solutions_found: int
     objective_value: Optional[float] = None
     statistics: Dict[str, any] = field(default_factory=dict)
+    solution_objectives: List[Optional[float]] = field(default_factory=list)
 
 
 class PlacementSolver:
@@ -301,21 +302,25 @@ class PlacementSolver:
                 clearance_grid = self._to_grid(clearance)
 
                 if clearance_grid > 0:
-                    # Add soft penalty for close placement
-                    # (Hard distance constraints can make problem infeasible)
-                    self._add_soft_distance_penalty(sv1, sv2, clearance_grid)
+                    # Add hard clearance constraint between structure centers
+                    # Note: This is a HARD constraint (infeasible if violated)
+                    # Phase 5 validation with Shapely catches true geometry violations
+                    self._add_hard_clearance_constraint(sv1, sv2, clearance_grid)
 
-    def _add_soft_distance_penalty(
+    def _add_hard_clearance_constraint(
         self,
         sv1: StructureVars,
         sv2: StructureVars,
         min_dist_grid: int,
     ):
-        """Add penalty for structures closer than minimum clearance.
+        """Add hard clearance constraint between structure centers.
+
+        This is a HARD constraint using AddBoolOr - if no valid separation
+        direction is found, the problem becomes infeasible.
 
         Uses Manhattan distance approximation since CP-SAT can't handle
         Euclidean distance directly. The actual Shapely validation in
-        Phase 5 will catch any remaining violations.
+        Phase 5 will catch any remaining violations with true geometry.
         """
         # Get structure dimensions for interval inflation
         dims1 = sv1.dims_by_orientation.get(0, (0, 0))
@@ -505,6 +510,7 @@ class PlacementSolver:
                 "conflicts": solver.NumConflicts(),
                 "wall_time": solver.WallTime(),
             },
+            solution_objectives=collector.get_objectives(),
         )
 
 

@@ -156,7 +156,7 @@ This allows topology-derived placement hints (flow direction, adjacency) to corr
 
 ## Engineering Rules
 
-Default rules are defined in `rulesets/default.yaml`:
+Default rules are defined in `src/rulesets/default.yaml`:
 
 - **Property setbacks**: Distance from site boundary (default: 7.5m)
 - **Equipment setbacks**: Type-specific boundary distances (e.g., digesters: 15m)
@@ -226,6 +226,15 @@ pytest tests/ -v
 The project uses standard Python formatting conventions.
 
 ## Recent Updates
+
+### v0.2.0 (2025-12-14)
+- **YAML Rulesets**: Pipeline now loads rules from `src/rulesets/default.yaml` instead of hardcoded defaults
+- **Wheel Packaging**: Rulesets moved into `src/` package for proper wheel distribution
+- **Solution Ranking**: Objective values now properly threaded through pipeline for correct ranking
+- **Rotation Export**: GeoJSON/SVG exports now correctly handle rotated rectangles (non-90° angles)
+- **Clearance Naming**: Renamed misleading `_add_soft_distance_penalty` to `_add_hard_clearance_constraint`
+- **Objective Sorting**: Fixed edge case where zero-valued objectives were treated as worst
+- **Road Pathfinding**: Fixed LineString error when start==end by ensuring 2-point minimum paths
 
 ### v0.1.0 (2025-12-10)
 - **SVG Export**: Fixed to work with Placement model (creates polygons from x/y/width/height)
