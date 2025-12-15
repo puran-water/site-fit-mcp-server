@@ -62,3 +62,48 @@ access:
 # Topology constraint weights (soft constraints)
 adjacency_preference_weight: 10.0  # Higher = stronger preference for topology adjacencies
 flow_direction_weight: 5.0         # Higher = stronger east-west flow preference
+
+# NFPA 820 Hazardous Area Classifications
+# Reference: NFPA 820 - Standard for Fire Protection in Wastewater Treatment and Collection Facilities
+# Class I, Division 1: Ignitable concentrations of flammable gases/vapors normally exist
+# Class I, Division 2: Ignitable concentrations may exist under abnormal conditions
+nfpa820_zones:
+  # Anaerobic digesters - major source of methane
+  digester:
+    class_i_div_1_radius: 0.0      # Interior only (not modeled as radius)
+    class_i_div_2_radius: 3.0      # 10 ft horizontal from openings
+    vertical_above: 0.46           # 18 inches above grade
+
+  # Wet wells - enclosed spaces with potential gas accumulation
+  wet_well:
+    class_i_div_1_radius: 0.0      # Interior only
+    class_i_div_2_radius: 3.0      # 10 ft horizontal
+    vertical_above: 0.46
+
+  # Digester gas piping and appurtenances
+  digester_gas_piping:
+    class_i_div_1_radius: 1.5      # 5 ft from connections/vents
+    class_i_div_2_radius: 3.0      # 10 ft from connections/vents
+
+  # Covered primary/secondary clarifiers with gas collection
+  covered_clarifier:
+    class_i_div_1_radius: 0.0      # Interior only
+    class_i_div_2_radius: 3.0      # 10 ft horizontal
+
+  # Odor control systems with potential H2S/methane
+  odor_control:
+    class_i_div_1_radius: 0.0
+    class_i_div_2_radius: 0.9      # 3 ft around vents
+
+  # Gas flares - area during normal operation
+  flare:
+    class_i_div_1_radius: 1.5      # 5 ft around base
+    class_i_div_2_radius: 4.5      # 15 ft around base
+
+# Equipment types that must be located outside hazard zones
+hazard_zone_exclusions:
+  - electrical_building
+  - control_building
+  - motor_control_center
+  - office
+  - laboratory

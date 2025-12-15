@@ -633,6 +633,132 @@ async def topology_parse_sfiles2(
         }
 
 
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,  # Only reads files
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_load_gis_file(
+    file_path: str,
+    boundary_layer: Optional[str] = None,
+    keepout_layers: Optional[List[str]] = None,
+    entrance_layer: Optional[str] = None,
+    target_crs: Optional[str] = None,
+    auto_detect: bool = True,
+) -> Dict[str, Any]:
+    """Load site definition from a GIS file.
+
+    Imports site boundary, keepout zones, and entrances from various GIS formats
+    including Shapefile, GeoJSON, GeoPackage, KML, and File Geodatabase.
+
+    Args:
+        file_path: Path to the GIS file
+        boundary_layer: Layer name for site boundary (auto-detect if None)
+        keepout_layers: Layer names for keepout zones (auto-detect if None)
+        entrance_layer: Layer name for entrance points (auto-detect if None)
+        target_crs: Target CRS for output (e.g., 'EPSG:32632'). None = keep original.
+        auto_detect: Auto-detect layers based on naming conventions
+
+    Returns:
+        Dict with boundary, keepouts, entrances, source_crs, layers_found, warnings
+    """
+    try:
+        from .loaders.gis_loader import load_site_from_file
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": "GIS loading requires fiona. Install with: pip install 'site-fit-mcp[gis]'",
+            "import_error": str(e),
+        }
+
+    try:
+        result = load_site_from_file(
+            file_path=file_path,
+            boundary_layer=boundary_layer,
+            keepout_layers=keepout_layers,
+            entrance_layer=entrance_layer,
+            target_crs=target_crs,
+            auto_detect=auto_detect,
+        )
+
+        return {
+            "success": True,
+            "boundary": result.boundary,
+            "boundary_area": result.boundary_area,
+            "entrances": result.entrances,
+            "keepouts": result.keepouts,
+            "source_crs": result.source_crs,
+            "layers_found": result.layers_found,
+            "warnings": result.warnings,
+        }
+
+    except FileNotFoundError as e:
+        return {
+            "success": False,
+            "error": f"File not found: {e}",
+        }
+    except Exception as e:
+        logger.exception(f"Failed to load GIS file: {file_path}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_list_gis_layers(
+    file_path: str,
+) -> Dict[str, Any]:
+    """List all layers in a GIS file with metadata.
+
+    Returns layer names, geometry types, feature counts, and CRS information.
+    Useful for inspecting files before loading.
+
+    Args:
+        file_path: Path to the GIS file
+
+    Returns:
+        Dict with layers array containing name, geometry_type, feature_count, crs
+    """
+    try:
+        from .loaders.gis_loader import list_gis_layers
+    except ImportError as e:
+        return {
+            "success": False,
+            "error": "GIS loading requires fiona. Install with: pip install 'site-fit-mcp[gis]'",
+            "import_error": str(e),
+        }
+
+    try:
+        layers = list_gis_layers(file_path)
+        return {
+            "success": True,
+            "file_path": file_path,
+            "layers": layers,
+        }
+    except FileNotFoundError as e:
+        return {
+            "success": False,
+            "error": f"File not found: {e}",
+        }
+    except Exception as e:
+        logger.exception(f"Failed to list GIS layers: {file_path}")
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
 def run_server():
     """Run the MCP server (MCP transport only)."""
     import asyncio

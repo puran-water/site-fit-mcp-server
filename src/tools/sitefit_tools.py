@@ -147,3 +147,90 @@ class SiteFitResponse(BaseModel):
     num_solutions: int = 0
     solutions: List[SolutionSummary] = Field(default_factory=list)
     statistics: Dict[str, Any] = Field(default_factory=dict)
+
+
+class GISLoadRequest(BaseModel):
+    """Request for loading site data from a GIS file."""
+
+    file_path: str = Field(
+        ...,
+        description="Path to the GIS file (Shapefile, GeoJSON, GeoPackage, etc.)",
+    )
+    boundary_layer: Optional[str] = Field(
+        default=None,
+        description="Layer name for site boundary (auto-detect if None)",
+    )
+    keepout_layers: Optional[List[str]] = Field(
+        default=None,
+        description="Layer names for keepout zones (auto-detect if None)",
+    )
+    entrance_layer: Optional[str] = Field(
+        default=None,
+        description="Layer name for entrance points (auto-detect if None)",
+    )
+    target_crs: Optional[str] = Field(
+        default=None,
+        description="Target CRS for output (e.g., 'EPSG:32632'). None = keep original.",
+    )
+    auto_detect: bool = Field(
+        default=True,
+        description="Auto-detect layers based on naming conventions",
+    )
+
+
+class GISLoadResponse(BaseModel):
+    """Response from loading a GIS file."""
+
+    success: bool
+    boundary: Optional[List[List[float]]] = Field(
+        default=None,
+        description="Site boundary coordinates (closed polygon)",
+    )
+    boundary_area: float = Field(
+        default=0.0,
+        description="Boundary area in source units (sq meters if CRS is projected)",
+    )
+    entrances: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Entrances loaded from file",
+    )
+    keepouts: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="Keepout zones loaded from file",
+    )
+    source_crs: Optional[str] = Field(
+        default=None,
+        description="Source coordinate reference system",
+    )
+    layers_found: List[str] = Field(
+        default_factory=list,
+        description="All layers found in the file",
+    )
+    warnings: List[str] = Field(
+        default_factory=list,
+        description="Warnings generated during loading",
+    )
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message if loading failed",
+    )
+
+
+class GISLayerInfo(BaseModel):
+    """Information about a layer in a GIS file."""
+
+    name: str
+    geometry_type: Optional[str] = None
+    feature_count: Optional[int] = None
+    crs: Optional[str] = None
+    properties: List[str] = Field(default_factory=list)
+    error: Optional[str] = None
+
+
+class GISListLayersResponse(BaseModel):
+    """Response from listing layers in a GIS file."""
+
+    success: bool
+    file_path: str
+    layers: List[GISLayerInfo] = Field(default_factory=list)
+    error: Optional[str] = None
