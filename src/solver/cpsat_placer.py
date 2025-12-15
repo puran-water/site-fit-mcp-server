@@ -49,6 +49,12 @@ class PlacementSolverConfig:
     # Parallel workers (0 = auto)
     num_workers: int = 0
 
+    # Randomize search for solution diversity
+    randomize_search: bool = True
+
+    # Size of variable pool for random branching (larger = more diversity)
+    search_random_variable_pool_size: int = 10
+
 
 @dataclass
 class StructureVars:
@@ -467,6 +473,13 @@ class PlacementSolver:
 
         if self.config.symmetry_breaking:
             solver.parameters.symmetry_level = 2
+
+        # Enable randomized search for solution diversity
+        if self.config.randomize_search:
+            solver.parameters.randomize_search = True
+            solver.parameters.search_random_variable_pool_size = (
+                self.config.search_random_variable_pool_size
+            )
 
         # Collect multiple solutions
         collector = SolutionCollector(

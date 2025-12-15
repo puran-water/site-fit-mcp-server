@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
+import networkx as nx
 from shapely.geometry import LineString, Point, Polygon, MultiLineString
 from shapely.ops import linemerge, unary_union
 
@@ -129,16 +130,24 @@ class RoadNetworkBuilder:
     def build_network(
         self,
         connect_all_docks: bool = True,
+        use_steiner: bool = True,
+        steiner_threshold: int = 3,
     ) -> Optional[RoadNetwork]:
         """Build road network connecting entrances to docks.
 
-        Uses a greedy approach:
+        For networks with multiple docks, uses Steiner tree optimization
+        to find a better topology before routing. Falls back to greedy
+        approach if Steiner fails or for simple networks.
+
+        Greedy approach:
         1. Start from entrance(s)
         2. Route to each dock in priority order
         3. Try to reuse existing road segments
 
         Args:
             connect_all_docks: If True, fail if any required dock can't be reached
+            use_steiner: If True, try Steiner tree for networks with many docks
+            steiner_threshold: Min number of docks to use Steiner tree (default: 3)
 
         Returns:
             RoadNetwork or None if building fails
@@ -155,6 +164,17 @@ class RoadNetworkBuilder:
         main_entrance = self.entrances[0]
         entrance_pt = main_entrance.point
 
+        # Try Steiner tree for larger networks (3+ docks)
+        if use_steiner and len(self.dock_zones) >= steiner_threshold:
+            logger.info(
+                f"Attempting Steiner tree optimization for {len(self.dock_zones)} docks"
+            )
+            steiner_network = self._build_steiner_network(entrance_pt, connect_all_docks)
+            if steiner_network is not None:
+                return steiner_network
+            logger.info("Steiner tree failed, falling back to greedy approach")
+
+        # Greedy approach: route to each dock sequentially
         # Track road segments
         segments: List[RoadSegment] = []
         segment_lines: List[LineString] = []  # For spatial queries
@@ -290,6 +310,124 @@ class RoadNetworkBuilder:
     def _distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
         """Euclidean distance between two points."""
         return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
+
+    def _build_steiner_network(
+        self,
+        entrance_pt: Tuple[float, float],
+        connect_all_docks: bool = True,
+    ) -> Optional[RoadNetwork]:
+        """Build road network using Steiner tree for optimal topology.
+
+        Uses NetworkX's Steiner tree approximation to find the minimum-cost
+        tree connecting entrance to all dock access points, then routes each
+        edge using A* pathfinding.
+
+        Args:
+            entrance_pt: Main entrance point
+            connect_all_docks: If True, fail if any required dock can't be reached
+
+        Returns:
+            RoadNetwork or None if building fails
+        """
+        # Collect terminal nodes: entrance + all dock access points
+        terminals: Dict[str, Tuple[float, float]] = {"entrance": entrance_pt}
+        for dock in self.dock_zones:
+            terminals[dock.structure_id] = dock.access_point
+
+        if len(terminals) < 2:
+            # Only entrance, no docks to connect
+            return RoadNetwork()
+
+        # Build complete graph with Euclidean distance as edge weights
+        # This is a heuristic - actual A* paths may differ due to obstacles
+        G = nx.Graph()
+        terminal_ids = list(terminals.keys())
+
+        for i, id1 in enumerate(terminal_ids):
+            pt1 = terminals[id1]
+            G.add_node(id1, pos=pt1)
+            for id2 in terminal_ids[i + 1:]:
+                pt2 = terminals[id2]
+                dist = self._distance(pt1, pt2)
+                G.add_edge(id1, id2, weight=dist)
+
+        # Compute Steiner tree (all nodes are terminals in this case)
+        # This effectively computes minimum spanning tree for our complete graph
+        try:
+            steiner = nx.algorithms.approximation.steiner_tree(
+                G, terminal_ids, weight="weight"
+            )
+        except Exception as e:
+            logger.warning(f"Steiner tree computation failed: {e}")
+            return None
+
+        # Route each edge of the Steiner tree using A*
+        segments: List[RoadSegment] = []
+        segment_lines: List[LineString] = []
+        connected_docks: Set[str] = set()
+        failed_edges: List[Tuple[str, str]] = []
+
+        for u, v in steiner.edges():
+            pt_u = terminals[u]
+            pt_v = terminals[v]
+
+            # Find A* path for this edge
+            result = find_road_path(
+                start=pt_u,
+                end=pt_v,
+                cost_grid=self.cost_grid,
+                allow_diagonal=False,
+            )
+
+            if result.success:
+                segment = self._create_segment(
+                    result.path,
+                    start_id=u,
+                    end_id=v,
+                )
+                segments.append(segment)
+                if len(result.path) >= 2:
+                    segment_lines.append(LineString(result.path))
+
+                # Track connected docks
+                if u != "entrance":
+                    connected_docks.add(u)
+                if v != "entrance":
+                    connected_docks.add(v)
+            else:
+                logger.warning(
+                    f"Could not route Steiner edge {u} -> {v}: {result.message}"
+                )
+                failed_edges.append((u, v))
+
+        # Check if all required docks are connected
+        if failed_edges:
+            required_docks = {
+                d.structure_id for d in self.dock_zones if d.required
+            }
+            failed_required = required_docks - connected_docks
+            if failed_required and connect_all_docks:
+                logger.error(
+                    f"Steiner network failed to connect required docks: {failed_required}"
+                )
+                return None
+
+        # Calculate total road length
+        total_length = sum(s.length for s in segments)
+
+        network = RoadNetwork(
+            segments=segments,
+            total_length=total_length,
+            entrances_connected=[e.id for e in self.entrances],
+            structures_accessible=list(connected_docks),
+        )
+
+        logger.info(
+            f"Built Steiner road network: {len(segments)} segments, "
+            f"{total_length:.1f}m total, {len(connected_docks)} docks connected"
+        )
+
+        return network
 
 
 def validate_road_network(
