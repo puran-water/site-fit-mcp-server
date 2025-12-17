@@ -1,8 +1,7 @@
 """Topology models for process flowsheet integration."""
 
-from typing import Any, Dict, List, Optional, Set, Tuple
-from pydantic import BaseModel, Field
 import networkx as nx
+from pydantic import BaseModel, Field
 
 
 class TopologyNode(BaseModel):
@@ -10,17 +9,17 @@ class TopologyNode(BaseModel):
 
     id: str = Field(..., description="Node identifier (from SFILES)")
     unit_type: str = Field(..., description="Unit type: reactor, tank, pump, etc.")
-    name: Optional[str] = Field(default=None, description="Descriptive name")
-    equipment_tag: Optional[str] = Field(
+    name: str | None = Field(default=None, description="Descriptive name")
+    equipment_tag: str | None = Field(
         default=None, description="Equipment tag (e.g., 230-AS-01)"
     )
-    area_number: Optional[int] = Field(default=None, description="Process area number")
-    category: Optional[str] = Field(default=None, description="Process category")
-    subcategory: Optional[str] = Field(default=None, description="Process subcategory")
+    area_number: int | None = Field(default=None, description="Process area number")
+    category: str | None = Field(default=None, description="Process category")
+    subcategory: str | None = Field(default=None, description="Process subcategory")
 
     # Computed attributes (populated during graph analysis)
-    rank: Optional[int] = Field(default=None, description="Topological rank (0 = inlet)")
-    scc_id: Optional[int] = Field(default=None, description="Strongly connected component ID")
+    rank: int | None = Field(default=None, description="Topological rank (0 = inlet)")
+    scc_id: int | None = Field(default=None, description="Strongly connected component ID")
 
     @property
     def semantic_id(self) -> str:
@@ -38,8 +37,8 @@ class TopologyEdge(BaseModel):
     stream_type: str = Field(
         default="material", description="Stream type: material, energy, signal"
     )
-    stream_name: Optional[str] = Field(default=None, description="Stream name/number")
-    tags: Dict[str, List[str]] = Field(
+    stream_name: str | None = Field(default=None, description="Stream name/number")
+    tags: dict[str, list[str]] = Field(
         default_factory=lambda: {"he": [], "col": []},
         description="SFILES v2 tags for heat exchangers, columns, etc.",
     )
@@ -49,36 +48,36 @@ class TopologyEdge(BaseModel):
 class TopologyGraph(BaseModel):
     """Process topology graph parsed from SFILES2."""
 
-    nodes: List[TopologyNode] = Field(default_factory=list, description="Topology nodes")
-    edges: List[TopologyEdge] = Field(default_factory=list, description="Topology edges")
+    nodes: list[TopologyNode] = Field(default_factory=list, description="Topology nodes")
+    edges: list[TopologyEdge] = Field(default_factory=list, description="Topology edges")
 
     # Analysis results
-    topological_ranks: Dict[str, int] = Field(
+    topological_ranks: dict[str, int] = Field(
         default_factory=dict, description="Node ID -> topological rank"
     )
-    scc_mapping: Dict[str, int] = Field(
+    scc_mapping: dict[str, int] = Field(
         default_factory=dict, description="Node ID -> SCC ID for recycle detection"
     )
-    area_clusters: Dict[int, List[str]] = Field(
+    area_clusters: dict[int, list[str]] = Field(
         default_factory=dict, description="Area number -> list of node IDs"
     )
 
-    def get_node(self, node_id: str) -> Optional[TopologyNode]:
+    def get_node(self, node_id: str) -> TopologyNode | None:
         """Get node by ID."""
         for node in self.nodes:
             if node.id == node_id:
                 return node
         return None
 
-    def get_edges_from(self, node_id: str) -> List[TopologyEdge]:
+    def get_edges_from(self, node_id: str) -> list[TopologyEdge]:
         """Get all edges originating from a node."""
         return [e for e in self.edges if e.source == node_id]
 
-    def get_edges_to(self, node_id: str) -> List[TopologyEdge]:
+    def get_edges_to(self, node_id: str) -> list[TopologyEdge]:
         """Get all edges targeting a node."""
         return [e for e in self.edges if e.target == node_id]
 
-    def get_adjacent_nodes(self, node_id: str) -> Set[str]:
+    def get_adjacent_nodes(self, node_id: str) -> set[str]:
         """Get IDs of all adjacent nodes (in or out)."""
         adjacent = set()
         for e in self.edges:
@@ -88,7 +87,7 @@ class TopologyGraph(BaseModel):
                 adjacent.add(e.source)
         return adjacent
 
-    def get_edge(self, source: str, target: str) -> Optional[TopologyEdge]:
+    def get_edge(self, source: str, target: str) -> TopologyEdge | None:
         """Get edge between two nodes if it exists."""
         for e in self.edges:
             if e.source == source and e.target == target:
@@ -97,11 +96,11 @@ class TopologyGraph(BaseModel):
 
     def to_networkx(self) -> nx.DiGraph:
         """Convert to NetworkX DiGraph for analysis."""
-        G = nx.DiGraph()
+        graph = nx.DiGraph()
 
         # Add nodes with attributes
         for node in self.nodes:
-            G.add_node(
+            graph.add_node(
                 node.id,
                 unit_type=node.unit_type,
                 name=node.name,
@@ -115,7 +114,7 @@ class TopologyGraph(BaseModel):
 
         # Add edges with attributes
         for edge in self.edges:
-            G.add_edge(
+            graph.add_edge(
                 edge.source,
                 edge.target,
                 stream_type=edge.stream_type,
@@ -124,13 +123,13 @@ class TopologyGraph(BaseModel):
                 weight=edge.weight,
             )
 
-        return G
+        return graph
 
     @classmethod
-    def from_networkx(cls, G: nx.DiGraph) -> "TopologyGraph":
+    def from_networkx(cls, graph: nx.DiGraph) -> "TopologyGraph":
         """Create from NetworkX DiGraph."""
         nodes = []
-        for node_id, attrs in G.nodes(data=True):
+        for node_id, attrs in graph.nodes(data=True):
             nodes.append(TopologyNode(
                 id=str(node_id),
                 unit_type=attrs.get("unit_type", "unknown"),
@@ -144,7 +143,7 @@ class TopologyGraph(BaseModel):
             ))
 
         edges = []
-        for source, target, attrs in G.edges(data=True):
+        for source, target, attrs in graph.edges(data=True):
             edges.append(TopologyEdge(
                 source=str(source),
                 target=str(target),
@@ -161,10 +160,10 @@ class TopologyGraph(BaseModel):
 
         Updates topological_ranks, scc_mapping, and node.rank/node.scc_id.
         """
-        G = self.to_networkx()
+        graph = self.to_networkx()
 
         # Compute SCCs (for detecting recycle loops)
-        sccs = list(nx.strongly_connected_components(G))
+        sccs = list(nx.strongly_connected_components(graph))
         for scc_id, scc in enumerate(sccs):
             for node_id in scc:
                 self.scc_mapping[node_id] = scc_id
@@ -173,17 +172,7 @@ class TopologyGraph(BaseModel):
                     node.scc_id = scc_id
 
         # Compute condensation graph for ranking
-        condensation = nx.condensation(G)
-
-        # Topological sort of condensation graph
-        try:
-            topo_order = list(nx.topological_sort(condensation))
-        except nx.NetworkXUnfeasible:
-            # Graph has cycles that couldn't be condensed - use simple ordering
-            topo_order = list(range(len(sccs)))
-
-        # Assign ranks based on condensation order
-        scc_to_rank = {scc_id: rank for rank, scc_id in enumerate(topo_order)}
+        condensation = nx.condensation(graph)
 
         for node in self.nodes:
             if node.id in self.scc_mapping:
@@ -205,6 +194,6 @@ class TopologyGraph(BaseModel):
                     self.area_clusters[node.area_number] = []
                 self.area_clusters[node.area_number].append(node.id)
 
-    def get_edge_list_with_weights(self) -> List[Tuple[str, str, float]]:
+    def get_edge_list_with_weights(self) -> list[tuple[str, str, float]]:
         """Get list of (source, target, weight) tuples for optimization."""
         return [(e.source, e.target, e.weight) for e in self.edges]

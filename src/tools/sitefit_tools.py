@@ -1,6 +1,7 @@
 """MCP tool request/response schemas."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -66,19 +67,19 @@ class SiteFitGenerationConfig(BaseModel):
 class SiteInput(BaseModel):
     """Site boundary and constraints input."""
 
-    boundary: List[List[float]] = Field(
+    boundary: list[list[float]] = Field(
         ...,
         description="Site boundary as list of [x, y] coordinates (closed polygon)",
     )
-    entrances: List[Dict[str, Any]] = Field(
+    entrances: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Site entrances with id, point, and optional width",
     )
-    keepouts: List[Dict[str, Any]] = Field(
+    keepouts: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Keep-out zones with id, geometry, and reason",
     )
-    existing: List[Dict[str, Any]] = Field(
+    existing: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Existing structures that cannot be moved",
     )
@@ -87,15 +88,15 @@ class SiteInput(BaseModel):
 class TopologyInput(BaseModel):
     """Process topology input."""
 
-    sfiles2: Optional[str] = Field(
+    sfiles2: str | None = Field(
         default=None,
         description="SFILES2 string describing process topology",
     )
-    node_metadata: Optional[Dict[str, Dict[str, Any]]] = Field(
+    node_metadata: dict[str, dict[str, Any]] | None = Field(
         default=None,
         description="Additional metadata for topology nodes",
     )
-    node_map: Optional[Dict[str, str]] = Field(
+    node_map: dict[str, str] | None = Field(
         default=None,
         description="Mapping from topology node IDs to structure IDs (e.g., {'reactor-1': 'RX-001'})",
     )
@@ -104,7 +105,7 @@ class TopologyInput(BaseModel):
 class ProgramInput(BaseModel):
     """Building program (structures to place)."""
 
-    structures: List[Dict[str, Any]] = Field(
+    structures: list[dict[str, Any]] = Field(
         ...,
         description="List of structures with footprint and requirements",
     )
@@ -114,12 +115,12 @@ class SiteFitRequest(BaseModel):
     """Complete request for site fit generation."""
 
     site: SiteInput = Field(..., description="Site boundary and constraints")
-    topology: Optional[TopologyInput] = Field(
+    topology: TopologyInput | None = Field(
         default=None,
         description="Process topology from SFILES2",
     )
     program: ProgramInput = Field(..., description="Building program")
-    rules_override: Optional[Dict[str, Any]] = Field(
+    rules_override: dict[str, Any] | None = Field(
         default=None,
         description="Override default engineering rules",
     )
@@ -134,8 +135,8 @@ class SolutionSummary(BaseModel):
 
     id: str
     rank: int
-    metrics: Dict[str, Any]
-    diversity_note: Optional[str] = None
+    metrics: dict[str, Any]
+    diversity_note: str | None = None
 
 
 class SiteFitResponse(BaseModel):
@@ -143,10 +144,10 @@ class SiteFitResponse(BaseModel):
 
     job_id: str
     status: str  # "completed", "failed", "timeout"
-    message: Optional[str] = None
+    message: str | None = None
     num_solutions: int = 0
-    solutions: List[SolutionSummary] = Field(default_factory=list)
-    statistics: Dict[str, Any] = Field(default_factory=dict)
+    solutions: list[SolutionSummary] = Field(default_factory=list)
+    statistics: dict[str, Any] = Field(default_factory=dict)
 
 
 class GISLoadRequest(BaseModel):
@@ -156,19 +157,19 @@ class GISLoadRequest(BaseModel):
         ...,
         description="Path to the GIS file (Shapefile, GeoJSON, GeoPackage, etc.)",
     )
-    boundary_layer: Optional[str] = Field(
+    boundary_layer: str | None = Field(
         default=None,
         description="Layer name for site boundary (auto-detect if None)",
     )
-    keepout_layers: Optional[List[str]] = Field(
+    keepout_layers: list[str] | None = Field(
         default=None,
         description="Layer names for keepout zones (auto-detect if None)",
     )
-    entrance_layer: Optional[str] = Field(
+    entrance_layer: str | None = Field(
         default=None,
         description="Layer name for entrance points (auto-detect if None)",
     )
-    target_crs: Optional[str] = Field(
+    target_crs: str | None = Field(
         default=None,
         description="Target CRS for output (e.g., 'EPSG:32632'). None = keep original.",
     )
@@ -182,7 +183,7 @@ class GISLoadResponse(BaseModel):
     """Response from loading a GIS file."""
 
     success: bool
-    boundary: Optional[List[List[float]]] = Field(
+    boundary: list[list[float]] | None = Field(
         default=None,
         description="Site boundary coordinates (closed polygon)",
     )
@@ -190,27 +191,27 @@ class GISLoadResponse(BaseModel):
         default=0.0,
         description="Boundary area in source units (sq meters if CRS is projected)",
     )
-    entrances: List[Dict[str, Any]] = Field(
+    entrances: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Entrances loaded from file",
     )
-    keepouts: List[Dict[str, Any]] = Field(
+    keepouts: list[dict[str, Any]] = Field(
         default_factory=list,
         description="Keepout zones loaded from file",
     )
-    source_crs: Optional[str] = Field(
+    source_crs: str | None = Field(
         default=None,
         description="Source coordinate reference system",
     )
-    layers_found: List[str] = Field(
+    layers_found: list[str] = Field(
         default_factory=list,
         description="All layers found in the file",
     )
-    warnings: List[str] = Field(
+    warnings: list[str] = Field(
         default_factory=list,
         description="Warnings generated during loading",
     )
-    error: Optional[str] = Field(
+    error: str | None = Field(
         default=None,
         description="Error message if loading failed",
     )
@@ -220,11 +221,11 @@ class GISLayerInfo(BaseModel):
     """Information about a layer in a GIS file."""
 
     name: str
-    geometry_type: Optional[str] = None
-    feature_count: Optional[int] = None
-    crs: Optional[str] = None
-    properties: List[str] = Field(default_factory=list)
-    error: Optional[str] = None
+    geometry_type: str | None = None
+    feature_count: int | None = None
+    crs: str | None = None
+    properties: list[str] = Field(default_factory=list)
+    error: str | None = None
 
 
 class GISListLayersResponse(BaseModel):
@@ -232,5 +233,5 @@ class GISListLayersResponse(BaseModel):
 
     success: bool
     file_path: str
-    layers: List[GISLayerInfo] = Field(default_factory=list)
-    error: Optional[str] = None
+    layers: list[GISLayerInfo] = Field(default_factory=list)
+    error: str | None = None

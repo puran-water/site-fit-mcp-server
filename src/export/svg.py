@@ -6,12 +6,11 @@ without requiring a full browser-based viewer.
 
 import logging
 import math
-from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
-from shapely.geometry import Polygon, LineString, Point
+from shapely.geometry import Polygon
 
-from ..models.solution import SiteFitSolution, Placement
+from ..models.solution import Placement, SiteFitSolution
 
 logger = logging.getLogger(__name__)
 
@@ -140,7 +139,7 @@ class SVGViewBox:
     @classmethod
     def from_bounds(
         cls,
-        bounds: Tuple[float, float, float, float],
+        bounds: tuple[float, float, float, float],
         padding: float = 10.0,
     ) -> "SVGViewBox":
         """Create viewbox from (minx, miny, maxx, maxy) bounds."""
@@ -161,13 +160,13 @@ class SVGViewBox:
 def export_solution_to_svg(
     solution: SiteFitSolution,
     boundary: Polygon,
-    keepouts: Optional[List[Polygon]] = None,
+    keepouts: list[Polygon] | None = None,
     width: int = 800,
     height: int = 600,
     show_labels: bool = True,
     show_roads: bool = True,
     show_docks: bool = True,
-    styles: Optional[dict] = None,
+    styles: dict | None = None,
 ) -> str:
     """Export a site layout solution to SVG format.
 
@@ -199,10 +198,10 @@ def export_solution_to_svg(
 
     # Start SVG
     svg_parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" ',
+        '<svg xmlns="http://www.w3.org/2000/svg" ',
         f'width="{width}" height="{height}" ',
         f'viewBox="{viewbox.to_attr()}" ',
-        f'preserveAspectRatio="xMidYMid meet">',
+        'preserveAspectRatio="xMidYMid meet">',
         "",
         "<!-- Site-Fit Generated SVG -->",
         f"<!-- Solution ID: {solution.id} -->",
@@ -333,7 +332,7 @@ def _label_to_svg(text: str, x: float, y: float, style: dict) -> str:
 
 
 def export_comparison_svg(
-    solutions: List[SiteFitSolution],
+    solutions: list[SiteFitSolution],
     boundary: Polygon,
     cols: int = 3,
     cell_width: int = 300,
@@ -358,7 +357,7 @@ def export_comparison_svg(
     total_height = rows * cell_height
 
     svg_parts = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" ',
+        '<svg xmlns="http://www.w3.org/2000/svg" ',
         f'width="{total_width}" height="{total_height}">',
         "",
         "<!-- Site-Fit Solution Comparison Grid -->",

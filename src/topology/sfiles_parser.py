@@ -6,7 +6,7 @@ Falls back to a simple regex-based parser if library not available.
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import networkx as nx
 
@@ -23,7 +23,7 @@ class SfilesParseError(Exception):
 
 def parse_sfiles_topology(
     sfiles_string: str,
-    node_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+    node_metadata: dict[str, dict[str, Any]] | None = None,
 ) -> TopologyGraph:
     """Parse SFILES2 string into a TopologyGraph.
 
@@ -59,7 +59,7 @@ def parse_sfiles_topology(
 
 def _parse_with_flowsheet_class(
     sfiles_string: str,
-    node_metadata: Dict[str, Dict[str, Any]],
+    node_metadata: dict[str, dict[str, Any]],
 ) -> TopologyGraph:
     """Parse using Flowsheet_Class from SFILES2 library."""
     from Flowsheet_Class.flowsheet import Flowsheet
@@ -116,7 +116,7 @@ def _parse_with_flowsheet_class(
 
 def _parse_with_fallback(
     sfiles_string: str,
-    node_metadata: Dict[str, Dict[str, Any]],
+    node_metadata: dict[str, dict[str, Any]],
 ) -> TopologyGraph:
     """Fallback regex-based parser for basic SFILES strings.
 
@@ -125,9 +125,10 @@ def _parse_with_fallback(
     """
     # SFILES element patterns
     unit_pattern = r"\(([^)]+)\)"  # (unit-name)
-    tag_pattern = r"\{([^}]+)\}"  # {tag}
-    cycle_start = r"<(\d+)"  # <1
-    cycle_end = r"(\d+)(?![^(]*\))"  # 1 (not inside parens)
+    # Patterns for future SFILES v2 features (tags, cycles)
+    # tag_pattern = r"\{([^}]+)\}"  # {tag}
+    # cycle_start = r"<(\d+)"  # <1
+    # cycle_end = r"(\d+)(?![^(]*\))"  # 1 (not inside parens)
 
     # Extract all units
     units = re.findall(unit_pattern, sfiles_string)
@@ -214,7 +215,7 @@ def _parse_with_fallback(
     return topology
 
 
-def _find_branches(sfiles_string: str) -> List[Tuple[int, int]]:
+def _find_branches(sfiles_string: str) -> list[tuple[int, int]]:
     """Find branch positions in SFILES string.
 
     Returns list of (start_index, end_index) for each [...] block.
@@ -239,8 +240,8 @@ def _find_branches(sfiles_string: str) -> List[Tuple[int, int]]:
 
 def _parse_branch_edges(
     sfiles_string: str,
-    node_ids: List[str],
-) -> List[Tuple[str, str]]:
+    node_ids: list[str],
+) -> list[tuple[str, str]]:
     """Parse branch structures and return additional edges.
 
     SFILES branch format: (A)[(B)(C)|&(D)(E)]
@@ -316,7 +317,7 @@ def _parse_branch_edges(
     return edges
 
 
-def _find_unit_index(unit_name: str, node_ids: List[str]) -> int:
+def _find_unit_index(unit_name: str, node_ids: list[str]) -> int:
     """Find index of a unit in the node_ids list.
 
     Handles both exact matches and partial matches for numbered units.
@@ -337,7 +338,7 @@ def _find_unit_index(unit_name: str, node_ids: List[str]) -> int:
     return -1
 
 
-def _find_cycles(sfiles_string: str) -> List[Tuple[int, int]]:
+def _find_cycles(sfiles_string: str) -> list[tuple[int, int]]:
     """Find recycle loop references in SFILES string.
 
     Looks for patterns like <1 ... 1 indicating a recycle stream.
@@ -365,7 +366,7 @@ def _find_cycles(sfiles_string: str) -> List[Tuple[int, int]]:
     return cycles
 
 
-def tokenize_sfiles(sfiles_string: str) -> List[Dict[str, Any]]:
+def tokenize_sfiles(sfiles_string: str) -> list[dict[str, Any]]:
     """Tokenize SFILES string into elements.
 
     Returns list of tokens with type and value.

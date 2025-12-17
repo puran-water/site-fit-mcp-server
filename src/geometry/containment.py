@@ -2,15 +2,14 @@
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Tuple, Union
 
-from shapely.geometry import Polygon, MultiPolygon, Point
+from shapely.geometry import Point
 from shapely.prepared import prep
 
 from .polygon_ops import (
     PolygonLike,
-    create_rectangle,
     create_circle,
+    create_rectangle,
     inset_polygon,
 )
 
@@ -30,7 +29,7 @@ class ContainmentResult:
     status: ContainmentStatus
     overlap_ratio: float  # 0.0 to 1.0, fraction of structure inside boundary
     outside_area: float   # Area of structure outside boundary
-    message: Optional[str] = None
+    message: str | None = None
 
     @property
     def is_valid(self) -> bool:
@@ -189,7 +188,7 @@ def get_placement_bounds(
     structure_width: float,
     structure_height: float,
     is_circular: bool = False,
-) -> Tuple[float, float, float, float]:
+) -> tuple[float, float, float, float]:
     """Get bounding box for valid placement centers.
 
     Args:
@@ -238,7 +237,7 @@ def get_valid_cells(
     grid_resolution: float = 1.0,
     structure_width: float = 0.0,
     structure_height: float = 0.0,
-) -> List[Tuple[int, int]]:
+) -> list[tuple[int, int]]:
     """Get list of valid grid cells for structure placement.
 
     Creates a grid over the buildable area and returns cells
@@ -296,7 +295,7 @@ def grid_to_coords(
     origin_x: float,
     origin_y: float,
     grid_resolution: float,
-) -> Tuple[float, float]:
+) -> tuple[float, float]:
     """Convert grid cell to world coordinates.
 
     Args:
@@ -321,7 +320,7 @@ def coords_to_grid(
     origin_x: float,
     origin_y: float,
     grid_resolution: float,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """Convert world coordinates to grid cell.
 
     Args:

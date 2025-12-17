@@ -4,13 +4,12 @@ Computes topological ranks, strongly connected components, and area clusters
 for placement optimization hints.
 """
 
-from typing import Dict, List, Set, Tuple
 import networkx as nx
 
 from ..models.topology import TopologyGraph
 
 
-def compute_topological_ranks(graph: nx.DiGraph) -> Dict[str, int]:
+def compute_topological_ranks(graph: nx.DiGraph) -> dict[str, int]:
     """Compute topological ranks for all nodes.
 
     Rank 0 = source nodes (no incoming edges)
@@ -51,7 +50,7 @@ def compute_topological_ranks(graph: nx.DiGraph) -> Dict[str, int]:
     return ranks
 
 
-def compute_sccs(graph: nx.DiGraph) -> Dict[str, int]:
+def compute_sccs(graph: nx.DiGraph) -> dict[str, int]:
     """Compute strongly connected components.
 
     Nodes in the same SCC form recycle loops and should be placed adjacently.
@@ -74,7 +73,7 @@ def compute_sccs(graph: nx.DiGraph) -> Dict[str, int]:
 
 def compute_area_clusters(
     topology: TopologyGraph,
-) -> Dict[int, List[str]]:
+) -> dict[int, list[str]]:
     """Group nodes by area number for clustered placement.
 
     Args:
@@ -83,7 +82,7 @@ def compute_area_clusters(
     Returns:
         Dict mapping area number to list of node IDs
     """
-    clusters: Dict[int, List[str]] = {}
+    clusters: dict[int, list[str]] = {}
 
     for node in topology.nodes:
         if node.area_number is not None:
@@ -97,7 +96,7 @@ def compute_area_clusters(
 def get_adjacency_pairs(
     topology: TopologyGraph,
     weight_by_stream_count: bool = True,
-) -> List[Tuple[str, str, float]]:
+) -> list[tuple[str, str, float]]:
     """Get pairs of nodes that should be placed adjacently.
 
     Returns weighted pairs based on:
@@ -112,7 +111,7 @@ def get_adjacency_pairs(
     Returns:
         List of (node1_id, node2_id, weight) tuples, sorted by weight descending
     """
-    pairs: Dict[Tuple[str, str], float] = {}
+    pairs: dict[tuple[str, str], float] = {}
 
     # Add edge-based pairs
     for edge in topology.edges:
@@ -124,7 +123,7 @@ def get_adjacency_pairs(
         pairs[key] += weight
 
     # Add SCC-based pairs (recycle loops should be close)
-    scc_groups: Dict[int, List[str]] = {}
+    scc_groups: dict[int, list[str]] = {}
     for node in topology.nodes:
         if node.scc_id is not None:
             if node.scc_id not in scc_groups:
@@ -150,7 +149,7 @@ def get_adjacency_pairs(
 
 def get_flow_precedence_pairs(
     topology: TopologyGraph,
-) -> List[Tuple[str, str]]:
+) -> list[tuple[str, str]]:
     """Get pairs where first node should be upstream (west) of second.
 
     Based on process flow direction - useful for soft constraints in solver.
@@ -171,7 +170,7 @@ def get_flow_precedence_pairs(
     return precedence
 
 
-def compute_node_degrees(graph: nx.DiGraph) -> Dict[str, Tuple[int, int]]:
+def compute_node_degrees(graph: nx.DiGraph) -> dict[str, tuple[int, int]]:
     """Compute in-degree and out-degree for each node.
 
     Useful for identifying:
@@ -191,7 +190,7 @@ def compute_node_degrees(graph: nx.DiGraph) -> Dict[str, Tuple[int, int]]:
     return degrees
 
 
-def identify_critical_path(graph: nx.DiGraph) -> List[str]:
+def identify_critical_path(graph: nx.DiGraph) -> list[str]:
     """Identify the critical path through the process.
 
     The critical path is the longest path from any source to any sink.

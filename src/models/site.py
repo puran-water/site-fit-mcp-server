@@ -1,6 +1,7 @@
 """Site boundary and constraint models."""
 
-from typing import List, Literal, Optional, Tuple, Union
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -8,7 +9,7 @@ class GeoJSONPoint(BaseModel):
     """GeoJSON Point geometry."""
 
     type: Literal["Point"] = "Point"
-    coordinates: Tuple[float, float] = Field(..., description="[x, y] coordinates in meters")
+    coordinates: tuple[float, float] = Field(..., description="[x, y] coordinates in meters")
 
 
 class GeoJSONPolygon(BaseModel):
@@ -19,13 +20,13 @@ class GeoJSONPolygon(BaseModel):
     """
 
     type: Literal["Polygon"] = "Polygon"
-    coordinates: List[List[Tuple[float, float]]] = Field(
+    coordinates: list[list[tuple[float, float]]] = Field(
         ..., description="List of rings, each ring is a list of [x, y] coordinates"
     )
 
     @field_validator("coordinates")
     @classmethod
-    def validate_rings(cls, v: List[List[Tuple[float, float]]]) -> List[List[Tuple[float, float]]]:
+    def validate_rings(cls, v: list[list[tuple[float, float]]]) -> list[list[tuple[float, float]]]:
         """Validate that at least one ring exists and rings are closed."""
         if not v:
             raise ValueError("Polygon must have at least one ring (exterior)")
@@ -37,12 +38,12 @@ class GeoJSONPolygon(BaseModel):
         return v
 
     @property
-    def exterior(self) -> List[Tuple[float, float]]:
+    def exterior(self) -> list[tuple[float, float]]:
         """Get exterior ring coordinates."""
         return self.coordinates[0]
 
     @property
-    def interiors(self) -> List[List[Tuple[float, float]]]:
+    def interiors(self) -> list[list[tuple[float, float]]]:
         """Get interior rings (holes) if any."""
         return self.coordinates[1:] if len(self.coordinates) > 1 else []
 
@@ -51,9 +52,9 @@ class Entrance(BaseModel):
     """Site entrance/gate for vehicle access."""
 
     id: str = Field(..., description="Unique identifier for entrance")
-    point: Tuple[float, float] = Field(..., description="[x, y] coordinates of entrance center")
+    point: tuple[float, float] = Field(..., description="[x, y] coordinates of entrance center")
     width: float = Field(default=6.0, ge=3.0, le=20.0, description="Gate width in meters")
-    direction: Optional[Literal["N", "S", "E", "W"]] = Field(
+    direction: Literal["N", "S", "E", "W"] | None = Field(
         default=None, description="Direction entrance faces (optional)"
     )
 
@@ -90,7 +91,7 @@ class ExistingStructure(BaseModel):
 
     id: str = Field(..., description="Unique identifier")
     footprint: GeoJSONPolygon = Field(..., description="Structure footprint polygon")
-    height: Optional[float] = Field(default=None, ge=0.0, description="Structure height in meters")
+    height: float | None = Field(default=None, ge=0.0, description="Structure height in meters")
     clearance_required: float = Field(
         default=3.0, ge=0.0, description="Minimum clearance from existing structure in meters"
     )
@@ -107,17 +108,17 @@ class SiteBoundary(BaseModel):
 
     units: Literal["m", "ft"] = Field(default="m", description="Coordinate units")
     boundary: GeoJSONPolygon = Field(..., description="Site perimeter boundary")
-    entrances: List[Entrance] = Field(
+    entrances: list[Entrance] = Field(
         default_factory=list, description="Site entrances for vehicle access"
     )
-    keepouts: List[Keepout] = Field(default_factory=list, description="No-build zones")
-    existing: List[ExistingStructure] = Field(
+    keepouts: list[Keepout] = Field(default_factory=list, description="No-build zones")
+    existing: list[ExistingStructure] = Field(
         default_factory=list, description="Existing structures (brownfield)"
     )
 
     @field_validator("entrances")
     @classmethod
-    def validate_entrances(cls, v: List[Entrance]) -> List[Entrance]:
+    def validate_entrances(cls, v: list[Entrance]) -> list[Entrance]:
         """Validate at least one entrance exists."""
         if not v:
             raise ValueError("Site must have at least one entrance")
@@ -131,7 +132,7 @@ class SiteBoundary(BaseModel):
     def is_brownfield(self) -> bool:
         return len(self.existing) > 0
 
-    def get_entrance_by_id(self, entrance_id: str) -> Optional[Entrance]:
+    def get_entrance_by_id(self, entrance_id: str) -> Entrance | None:
         """Get entrance by ID."""
         for entrance in self.entrances:
             if entrance.id == entrance_id:

@@ -1,14 +1,12 @@
 """Pairwise clearance calculations and violation detection."""
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
 
-from shapely.geometry import Polygon, MultiPolygon, Point
 from shapely.strtree import STRtree
 
-from ..models.structures import PlacedStructure
 from ..models.rules import RuleSet
-from .polygon_ops import create_rectangle, create_circle, PolygonLike
+from ..models.structures import PlacedStructure
+from .polygon_ops import PolygonLike
 
 
 @dataclass
@@ -37,8 +35,8 @@ class ClearanceViolation:
 
 
 def compute_pairwise_distances(
-    structures: List[PlacedStructure],
-) -> Dict[Tuple[str, str], float]:
+    structures: list[PlacedStructure],
+) -> dict[tuple[str, str], float]:
     """Compute distance between all pairs of structures.
 
     Uses Shapely for accurate polygon-to-polygon distance.
@@ -69,10 +67,10 @@ def compute_pairwise_distances(
 
 
 def check_clearance_violations(
-    structures: List[PlacedStructure],
+    structures: list[PlacedStructure],
     rules: RuleSet,
-    structure_types: Optional[Dict[str, str]] = None,
-) -> List[ClearanceViolation]:
+    structure_types: dict[str, str] | None = None,
+) -> list[ClearanceViolation]:
     """Check all pairwise clearances against rules.
 
     Args:
@@ -121,9 +119,9 @@ def check_clearance_violations(
 
 def get_minimum_clearance(
     structure: PlacedStructure,
-    other_structures: List[PlacedStructure],
+    other_structures: list[PlacedStructure],
     use_strtree: bool = True,
-) -> Tuple[float, Optional[str]]:
+) -> tuple[float, str | None]:
     """Get minimum clearance from structure to any other structure.
 
     Uses STRtree spatial index for efficient nearest neighbor queries
@@ -178,9 +176,9 @@ def get_minimum_clearance(
 
 
 def check_overlap(
-    structures: List[PlacedStructure],
+    structures: list[PlacedStructure],
     tolerance: float = 0.01,
-) -> List[Tuple[str, str, float]]:
+) -> list[tuple[str, str, float]]:
     """Check for overlapping structures.
 
     Uses STRtree spatial index for efficient candidate filtering.
@@ -239,10 +237,10 @@ def check_overlap(
 
 
 def compute_clearance_matrix(
-    structures: List[PlacedStructure],
+    structures: list[PlacedStructure],
     rules: RuleSet,
-    structure_types: Optional[Dict[str, str]] = None,
-) -> Dict[Tuple[str, str], Dict[str, float]]:
+    structure_types: dict[str, str] | None = None,
+) -> dict[tuple[str, str], dict[str, float]]:
     """Compute detailed clearance matrix with actual and required distances.
 
     Args:
@@ -282,7 +280,7 @@ def check_boundary_clearance(
     structure: PlacedStructure,
     boundary: PolygonLike,
     required_setback: float,
-) -> Tuple[bool, float]:
+) -> tuple[bool, float]:
     """Check if structure maintains required setback from boundary.
 
     Args:
@@ -302,9 +300,9 @@ def check_boundary_clearance(
 
 
 def find_nearest_neighbors(
-    structures: List[PlacedStructure],
+    structures: list[PlacedStructure],
     k: int = 3,
-) -> Dict[str, List[Tuple[str, float]]]:
+) -> dict[str, list[tuple[str, float]]]:
     """Find k nearest neighbors for each structure.
 
     Uses STRtree spatial index for efficient queries.
@@ -352,8 +350,8 @@ def find_nearest_neighbors(
 
 
 def validate_no_overlap_2d_compatible(
-    structures: List[PlacedStructure],
-) -> Tuple[bool, List[str]]:
+    structures: list[PlacedStructure],
+) -> tuple[bool, list[str]]:
     """Validate that structures can be represented in NoOverlap2D constraint.
 
     NoOverlap2D requires axis-aligned rectangles. This checks if:

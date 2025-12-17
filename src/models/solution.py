@@ -1,22 +1,22 @@
 """Solution and output models for site-fit results."""
 
-from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
+from typing import Any
+
 from pydantic import BaseModel, Field, computed_field
-import json
 
 
 class RoadSegment(BaseModel):
     """A segment of the road network."""
 
     id: str = Field(..., description="Segment identifier")
-    start: Tuple[float, float] = Field(..., description="Start point [x, y]")
-    end: Tuple[float, float] = Field(..., description="End point [x, y]")
+    start: tuple[float, float] = Field(..., description="Start point [x, y]")
+    end: tuple[float, float] = Field(..., description="End point [x, y]")
     width: float = Field(default=6.0, description="Road width in meters")
-    waypoints: List[Tuple[float, float]] = Field(
+    waypoints: list[tuple[float, float]] = Field(
         default_factory=list, description="Intermediate waypoints for curved roads"
     )
-    connects_to: List[str] = Field(
+    connects_to: list[str] = Field(
         default_factory=list, description="IDs of connected road segments or structures"
     )
 
@@ -32,7 +32,7 @@ class RoadSegment(BaseModel):
             total += math.sqrt(dx * dx + dy * dy)
         return total
 
-    def to_linestring_coords(self) -> List[Tuple[float, float]]:
+    def to_linestring_coords(self) -> list[tuple[float, float]]:
         """Get coordinates as LineString format for GeoJSON."""
         return [self.start] + self.waypoints + [self.end]
 
@@ -40,12 +40,12 @@ class RoadSegment(BaseModel):
 class RoadNetwork(BaseModel):
     """Complete road network for a site layout solution."""
 
-    segments: List[RoadSegment] = Field(default_factory=list, description="Road segments")
+    segments: list[RoadSegment] = Field(default_factory=list, description="Road segments")
     total_length: float = Field(default=0.0, description="Total road length in meters")
-    entrances_connected: List[str] = Field(
+    entrances_connected: list[str] = Field(
         default_factory=list, description="IDs of site entrances connected"
     )
-    structures_accessible: List[str] = Field(
+    structures_accessible: list[str] = Field(
         default_factory=list, description="IDs of structures with road access"
     )
 
@@ -75,7 +75,7 @@ class SolutionMetrics(BaseModel):
     )
 
     # ROM metrics (new)
-    pipe_length_by_type: Dict[str, float] = Field(
+    pipe_length_by_type: dict[str, float] = Field(
         default_factory=dict,
         description="Pipe length breakdown by type: {gravity, pressure, gas, sludge}"
     )
@@ -88,7 +88,7 @@ class SolutionMetrics(BaseModel):
     intersection_count: int = Field(
         default=0, ge=0, description="Number of road intersections (3+ way)"
     )
-    min_throat_width: Optional[float] = Field(
+    min_throat_width: float | None = Field(
         default=None, ge=0, description="Narrowest passage between structures in meters"
     )
 
@@ -125,7 +125,7 @@ class SolutionMetrics(BaseModel):
         """Check if solution is feasible (no hard constraint violations)."""
         return self.clearance_violations == 0 and self.access_violations == 0
 
-    def overall_score(self, weights: Optional[Dict[str, float]] = None) -> float:
+    def overall_score(self, weights: dict[str, float] | None = None) -> float:
         """Compute weighted overall score (lower is better)."""
         w = weights or {
             "pipe_length": 1.0,
@@ -157,7 +157,7 @@ class Placement(BaseModel):
         """Check if this is a circular structure."""
         return self.shape == "circle"
 
-    def get_bounds(self) -> Tuple[float, float, float, float]:
+    def get_bounds(self) -> tuple[float, float, float, float]:
         """Get axis-aligned bounding box (min_x, min_y, max_x, max_y)."""
         half_w, half_h = self.width / 2, self.height / 2
         return (
@@ -167,7 +167,7 @@ class Placement(BaseModel):
             self.y + half_h,
         )
 
-    def to_geojson_geometry(self) -> Dict[str, Any]:
+    def to_geojson_geometry(self) -> dict[str, Any]:
         """Convert to GeoJSON geometry with rotation applied.
 
         For circles: 32-point polygon approximation (rotation has no effect)
@@ -231,21 +231,21 @@ class SiteFitSolution(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
     # Core solution data
-    placements: List[Placement] = Field(..., description="Structure placements")
-    road_network: Optional[RoadNetwork] = Field(default=None, description="Road network solution")
+    placements: list[Placement] = Field(..., description="Structure placements")
+    road_network: RoadNetwork | None = Field(default=None, description="Road network solution")
     metrics: SolutionMetrics = Field(default_factory=SolutionMetrics)
 
     # GeoJSON export
-    features_geojson: Optional[Dict[str, Any]] = Field(
+    features_geojson: dict[str, Any] | None = Field(
         default=None, description="GeoJSON FeatureCollection for visualization"
     )
 
     # Explanation for diversity
-    diversity_note: Optional[str] = Field(
+    diversity_note: str | None = Field(
         default=None, description="Why this solution differs from others"
     )
 
-    def get_placement(self, structure_id: str) -> Optional[Placement]:
+    def get_placement(self, structure_id: str) -> Placement | None:
         """Get placement for a specific structure."""
         for p in self.placements:
             if p.structure_id == structure_id:
@@ -257,7 +257,7 @@ class SiteFitSolution(BaseModel):
         include_site: bool = True,
         include_roads: bool = True,
         include_labels: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate GeoJSON FeatureCollection for this solution.
 
         If features_geojson is already computed, returns it.

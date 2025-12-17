@@ -5,20 +5,20 @@ from .cpsat_placer import (
     PlacementSolverConfig,
     SolverResult,
 )
-from .solution_pool import (
-    SolutionCollector,
-    SolutionPool,
-)
 from .diversity import (
     SolutionFingerprint,
-    filter_diverse_solutions,
     compute_solution_distance,
+    filter_diverse_solutions,
 )
 from .grid_candidates import (
     CandidateGrid,
-    compute_valid_candidates,
-    compute_candidates_for_structures,
     candidates_to_element_tables,
+    compute_candidates_for_structures,
+    compute_valid_candidates,
+)
+from .solution_pool import (
+    SolutionCollector,
+    SolutionPool,
 )
 
 __all__ = [

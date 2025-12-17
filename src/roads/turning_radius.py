@@ -10,7 +10,6 @@ where θ is the deflection angle (0 = straight, π = U-turn).
 
 import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 
 @dataclass
@@ -18,7 +17,7 @@ class TurningRadiusIssue:
     """Details about a turning radius violation."""
 
     corner_index: int
-    corner_point: Tuple[float, float]
+    corner_point: tuple[float, float]
     turn_angle_deg: float
     max_achievable_radius: float
     required_radius: float
@@ -39,8 +38,8 @@ class TurningRadiusResult:
     """Result of turning radius validation."""
 
     is_valid: bool
-    issues: List[TurningRadiusIssue]
-    min_achievable_radius: Optional[float] = None  # Tightest corner
+    issues: list[TurningRadiusIssue]
+    min_achievable_radius: float | None = None  # Tightest corner
 
     @property
     def summary(self) -> str:
@@ -50,7 +49,7 @@ class TurningRadiusResult:
 
 
 def validate_turning_radius(
-    path: List[Tuple[float, float]],
+    path: list[tuple[float, float]],
     min_radius: float,
     tolerance: float = 0.5,
 ) -> TurningRadiusResult:
@@ -199,12 +198,12 @@ def compute_required_leg_length(
 
 
 def smooth_corner_with_arc(
-    p_prev: Tuple[float, float],
-    p_curr: Tuple[float, float],
-    p_next: Tuple[float, float],
+    p_prev: tuple[float, float],
+    p_curr: tuple[float, float],
+    p_next: tuple[float, float],
     radius: float,
     num_points: int = 8,
-) -> List[Tuple[float, float]]:
+) -> list[tuple[float, float]]:
     """Generate arc points to smooth a corner with given radius.
 
     Replaces a sharp corner with an inscribed circular arc.

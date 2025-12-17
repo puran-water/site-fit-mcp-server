@@ -3,11 +3,10 @@
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Tuple
 
-from shapely.geometry import Polygon, Point, LineString, box
+from shapely.geometry import Polygon, box
 
-from ..models.structures import PlacedStructure, AccessRequirement
+from ..models.structures import PlacedStructure
 
 logger = logging.getLogger(__name__)
 
@@ -27,12 +26,12 @@ class DockZone:
     structure_id: str
     edge: DockEdge
     geometry: Polygon  # Rectangular dock area
-    access_point: Tuple[float, float]  # Point where road connects
+    access_point: tuple[float, float]  # Point where road connects
     vehicle_type: str
     required: bool
 
     @property
-    def center(self) -> Tuple[float, float]:
+    def center(self) -> tuple[float, float]:
         """Get center point of dock zone."""
         centroid = self.geometry.centroid
         return (centroid.x, centroid.y)
@@ -60,7 +59,7 @@ class DockZone:
 def get_dock_edge(
     structure: PlacedStructure,
     preference: str,  # "long_side", "short_side", "any"
-    blocked_edges: Optional[List[DockEdge]] = None,
+    blocked_edges: list[DockEdge] | None = None,
 ) -> DockEdge:
     """Determine which edge to place dock on.
 
@@ -121,7 +120,7 @@ def create_dock_geometry(
     edge: DockEdge,
     dock_length: float,
     dock_width: float,
-) -> Tuple[Polygon, Tuple[float, float]]:
+) -> tuple[Polygon, tuple[float, float]]:
     """Create dock zone geometry adjacent to structure edge.
 
     Args:
@@ -174,10 +173,10 @@ def create_dock_geometry(
 
 
 def generate_dock_zones(
-    placements: List[PlacedStructure],
+    placements: list[PlacedStructure],
     default_dock_length: float = 15.0,
     default_dock_width: float = 6.0,
-) -> List[DockZone]:
+) -> list[DockZone]:
     """Generate dock zones for all structures with access requirements.
 
     Args:
@@ -222,10 +221,10 @@ def generate_dock_zones(
 
 
 def check_dock_overlaps(
-    dock_zones: List[DockZone],
-    structures: List[PlacedStructure],
+    dock_zones: list[DockZone],
+    structures: list[PlacedStructure],
     tolerance: float = 0.1,
-) -> List[Tuple[str, str, float]]:
+) -> list[tuple[str, str, float]]:
     """Check for overlaps between dock zones and structures.
 
     Args:
@@ -261,8 +260,8 @@ def check_dock_overlaps(
 def adjust_dock_for_overlap(
     dock: DockZone,
     structure: PlacedStructure,
-    other_structures: List[PlacedStructure],
-) -> Optional[DockZone]:
+    other_structures: list[PlacedStructure],
+) -> DockZone | None:
     """Try to adjust dock zone to avoid overlaps.
 
     Attempts to find an alternative edge that doesn't overlap.

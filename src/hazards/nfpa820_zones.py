@@ -12,12 +12,11 @@ non-hazardous-rated equipment is placed outside these zones.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
 
-from shapely.geometry import Polygon, MultiPolygon, Point, mapping
+from shapely.geometry import Point, Polygon, mapping
 from shapely.ops import unary_union
 
-from ..models.rules import RuleSet, NFPA820ZoneConfig
+from ..models.rules import RuleSet
 from ..models.solution import Placement
 
 
@@ -39,7 +38,7 @@ class HazardZone:
     radius: float  # Zone radius in meters
     vertical_extent: float  # Vertical extent above grade in meters
 
-    def to_geojson_feature(self) -> Dict:
+    def to_geojson_feature(self) -> dict:
         """Convert to GeoJSON Feature.
 
         Uses shapely.geometry.mapping() to correctly handle:
@@ -68,10 +67,10 @@ class HazardZone:
 
 
 def compute_hazard_zones(
-    placements: List[Placement],
+    placements: list[Placement],
     rules: RuleSet,
-    structure_types: Optional[Dict[str, str]] = None,
-) -> List[HazardZone]:
+    structure_types: dict[str, str] | None = None,
+) -> list[HazardZone]:
     """Compute NFPA 820 hazard zones for all placed structures.
 
     Args:
@@ -83,7 +82,7 @@ def compute_hazard_zones(
         List of HazardZone objects for both Division 1 and Division 2 zones
     """
     structure_types = structure_types or {}
-    zones: List[HazardZone] = []
+    zones: list[HazardZone] = []
 
     for placement in placements:
         # Determine equipment type
@@ -135,7 +134,7 @@ def compute_hazard_zones(
     return zones
 
 
-def _get_placement_centroid(placement: Placement) -> Tuple[float, float]:
+def _get_placement_centroid(placement: Placement) -> tuple[float, float]:
     """Get the centroid of a placement.
 
     Note: Placement.x and Placement.y are already center coordinates.
@@ -193,9 +192,9 @@ def _get_placement_footprint(placement: Placement) -> Polygon:
 
 
 def get_combined_hazard_zones(
-    zones: List[HazardZone],
-    zone_type: Optional[HazardZoneType] = None,
-) -> Optional[Polygon]:
+    zones: list[HazardZone],
+    zone_type: HazardZoneType | None = None,
+) -> Polygon | None:
     """Combine multiple hazard zones into a single polygon.
 
     Args:
@@ -235,11 +234,11 @@ class HazardZoneViolation:
 
 
 def validate_hazard_zone_exclusions(
-    placements: List[Placement],
-    zones: List[HazardZone],
+    placements: list[Placement],
+    zones: list[HazardZone],
     rules: RuleSet,
-    structure_types: Optional[Dict[str, str]] = None,
-) -> List[HazardZoneViolation]:
+    structure_types: dict[str, str] | None = None,
+) -> list[HazardZoneViolation]:
     """Validate that excluded equipment types are outside hazard zones.
 
     Args:
@@ -252,7 +251,7 @@ def validate_hazard_zone_exclusions(
         List of violations where excluded equipment is in hazard zones
     """
     structure_types = structure_types or {}
-    violations: List[HazardZoneViolation] = []
+    violations: list[HazardZoneViolation] = []
 
     # Build combined zone polygons by type
     div1_combined = get_combined_hazard_zones(zones, HazardZoneType.CLASS_I_DIV_1)
@@ -306,6 +305,6 @@ def validate_hazard_zone_exclusions(
     return violations
 
 
-def _get_placement_centroid_from_zone(zone: HazardZone) -> Tuple[float, float]:
+def _get_placement_centroid_from_zone(zone: HazardZone) -> tuple[float, float]:
     """Get centroid from zone polygon centroid."""
     return (zone.polygon.centroid.x, zone.polygon.centroid.y)

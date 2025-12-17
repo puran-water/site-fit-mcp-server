@@ -8,13 +8,11 @@ Generates engineering-style plan sheets with:
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
-import math
 
 from shapely.geometry import Polygon
 
-from ..models.solution import SiteFitSolution, Placement
+from ..models.solution import SiteFitSolution
 from .quantities import QuantityTakeoff
 
 
@@ -27,7 +25,7 @@ class PDFReportConfig:
     project_name: str = ""
     drawing_number: str = ""
     revision: str = "A"
-    scale: Optional[str] = None  # Auto-calculated if None
+    scale: str | None = None  # Auto-calculated if None
     include_quantities: bool = True
     include_constraints: bool = True
     company_name: str = ""
@@ -38,8 +36,8 @@ def generate_pdf_report(
     solution: SiteFitSolution,
     boundary: Polygon,
     takeoff: QuantityTakeoff,
-    config: Optional[PDFReportConfig] = None,
-    tight_constraints: Optional[List[str]] = None,
+    config: PDFReportConfig | None = None,
+    tight_constraints: list[str] | None = None,
 ) -> bytes:
     """Generate PDF plan sheet for a site layout solution.
 
@@ -57,7 +55,7 @@ def generate_pdf_report(
         ImportError: If weasyprint is not installed
     """
     try:
-        from weasyprint import HTML, CSS
+        from weasyprint import CSS, HTML
     except ImportError:
         raise ImportError(
             "weasyprint is required for PDF export. "
@@ -128,7 +126,7 @@ def _nice_scale(ratio: int) -> int:
 def _generate_layout_svg(
     solution: SiteFitSolution,
     boundary: Polygon,
-    bounds: Tuple[float, float, float, float],
+    bounds: tuple[float, float, float, float],
     svg_width: float,
     svg_height: float,
     scale_factor: float,
@@ -223,7 +221,7 @@ def _generate_layout_svg(
     return "\n".join(svg_parts)
 
 
-def _nice_scale_bar_length(bounds: Tuple[float, float, float, float]) -> int:
+def _nice_scale_bar_length(bounds: tuple[float, float, float, float]) -> int:
     """Calculate nice scale bar length for the site size."""
     width = bounds[2] - bounds[0]
     target = width / 5  # About 1/5 of site width
@@ -239,7 +237,7 @@ def _generate_html_report(
     takeoff: QuantityTakeoff,
     config: PDFReportConfig,
     scale_string: str,
-    tight_constraints: List[str],
+    tight_constraints: list[str],
     svg_width: float,
     svg_height: float,
 ) -> str:

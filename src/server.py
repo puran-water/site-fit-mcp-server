@@ -5,22 +5,17 @@ with FastAPI for static file serving (viewer).
 """
 
 import asyncio
-import json
 import logging
-import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from .pipeline import generate_site_fits
 from .tools.sitefit_tools import (
     SiteFitRequest,
-    SiteFitResponse,
-    SolutionSummary,
 )
-from .pipeline import generate_site_fits
-from .models.rules import RuleSet
 
 # Path to static files
 STATIC_DIR = Path(__file__).parent.parent / "static"
@@ -43,8 +38,8 @@ mcp = FastMCP(
 )
 
 # In-memory storage for jobs and solutions
-_jobs: Dict[str, Dict[str, Any]] = {}
-_solutions: Dict[str, Any] = {}
+_jobs: dict[str, dict[str, Any]] = {}
+_solutions: dict[str, Any] = {}
 
 
 @mcp.tool(
@@ -56,17 +51,17 @@ _solutions: Dict[str, Any] = {}
     }
 )
 async def sitefit_generate(
-    site_boundary: List[List[float]],
-    structures: List[Dict[str, Any]],
-    entrances: Optional[List[Dict[str, Any]]] = None,
-    keepouts: Optional[List[Dict[str, Any]]] = None,
-    existing: Optional[List[Dict[str, Any]]] = None,
-    sfiles2: Optional[str] = None,
-    rules_override: Optional[Dict[str, Any]] = None,
+    site_boundary: list[list[float]],
+    structures: list[dict[str, Any]],
+    entrances: list[dict[str, Any]] | None = None,
+    keepouts: list[dict[str, Any]] | None = None,
+    existing: list[dict[str, Any]] | None = None,
+    sfiles2: str | None = None,
+    rules_override: dict[str, Any] | None = None,
     max_solutions: int = 5,
     max_time_seconds: float = 60.0,
     seed: int = 42,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate site layout solutions for wastewater/biogas facilities.
 
     Creates multiple diverse placement solutions using constraint programming
@@ -161,8 +156,8 @@ async def sitefit_generate(
     }
 )
 async def sitefit_generate_from_request(
-    request: Dict[str, Any],
-) -> Dict[str, Any]:
+    request: dict[str, Any],
+) -> dict[str, Any]:
     """Generate site layout solutions from a complete SiteFitRequest object.
 
     Alternative to sitefit_generate that accepts the full nested request schema.
@@ -242,7 +237,7 @@ async def sitefit_generate_from_request(
 async def sitefit_get_solution(
     solution_id: str,
     include_geojson: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get full details of a specific solution by ID.
 
     Retrieves placement coordinates, metrics, road network, and optional
@@ -284,7 +279,7 @@ async def sitefit_list_solutions(
     job_id: str,
     limit: int = 20,
     offset: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List solutions for a job with pagination.
 
     Returns summaries (id, rank, metrics) for quick browsing.
@@ -348,7 +343,7 @@ async def sitefit_list_solutions(
 )
 async def sitefit_job_status(
     job_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get the status of a site-fit generation job.
 
     Check if a job is queued, running, completed, or failed.
@@ -401,7 +396,7 @@ async def sitefit_job_status(
 async def sitefit_export(
     solution_id: str,
     format: str = "geojson",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Export a solution to various formats.
 
     Converts solution data to GeoJSON, SVG, or summary formats
@@ -438,9 +433,10 @@ async def sitefit_export(
     elif format == "svg":
         # Use SVG export module
         try:
+            from shapely.geometry import Polygon
+
             from .export.svg import export_solution_to_svg
             from .models.solution import SiteFitSolution
-            from shapely.geometry import Polygon
 
             # Reconstruct solution object
             sol = SiteFitSolution(**solution)
@@ -521,11 +517,11 @@ async def sitefit_export(
 )
 async def sitefit_export_pack(
     solution_id: str,
-    formats: List[str] = ["geojson", "csv"],
-    output_dir: Optional[str] = None,
+    formats: list[str] = ["geojson", "csv"],
+    output_dir: str | None = None,
     project_name: str = "",
     drawing_number: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Export solution as a complete deliverable package with multiple formats.
 
     Generates bundled exports for proposal exhibits and civil handoff:
@@ -552,9 +548,10 @@ async def sitefit_export_pack(
         }
 
     try:
+        from shapely.geometry import Polygon
+
         from .export.pack import export_pack
         from .models.solution import SiteFitSolution
-        from shapely.geometry import Polygon
 
         # Reconstruct solution object
         solution_data = _solutions[solution_id]
@@ -639,7 +636,7 @@ async def sitefit_export_pack(
         "openWorldHint": False,
     }
 )
-async def ruleset_list() -> Dict[str, Any]:
+async def ruleset_list() -> dict[str, Any]:
     """List available rulesets for site layout generation.
 
     Returns names and descriptions of available engineering rule configurations.
@@ -674,7 +671,7 @@ async def ruleset_list() -> Dict[str, Any]:
 )
 async def ruleset_get(
     name: str = "default",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get a ruleset configuration and JSON schema.
 
     Returns the full ruleset with setback/clearance values and the
@@ -720,7 +717,7 @@ async def ruleset_get(
 )
 async def topology_parse_sfiles2(
     sfiles2: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Parse and validate an SFILES2 process topology string.
 
     Tokenizes the SFILES2 notation and extracts nodes (equipment) and
@@ -766,12 +763,12 @@ async def topology_parse_sfiles2(
 )
 async def sitefit_load_gis_file(
     file_path: str,
-    boundary_layer: Optional[str] = None,
-    keepout_layers: Optional[List[str]] = None,
-    entrance_layer: Optional[str] = None,
-    target_crs: Optional[str] = None,
+    boundary_layer: str | None = None,
+    keepout_layers: list[str] | None = None,
+    entrance_layer: str | None = None,
+    target_crs: str | None = None,
     auto_detect: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Load site definition from a GIS file.
 
     Imports site boundary, keepout zones, and entrances from various GIS formats
@@ -841,7 +838,7 @@ async def sitefit_load_gis_file(
 )
 async def sitefit_list_gis_layers(
     file_path: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List all layers in a GIS file with metadata.
 
     Returns layer names, geometry types, feature counts, and CRS information.
@@ -884,7 +881,6 @@ async def sitefit_list_gis_layers(
 
 def run_server():
     """Run the MCP server (MCP transport only)."""
-    import asyncio
 
     asyncio.run(mcp.run())
 
@@ -901,11 +897,10 @@ def run_with_static_server(host: str = "0.0.0.0", port: int = 8765):
         host: Host to bind to
         port: Port to listen on
     """
-    from fastapi import FastAPI, HTTPException
-    from fastapi.staticfiles import StaticFiles
-    from fastapi.middleware.cors import CORSMiddleware
-    from starlette.responses import FileResponse, JSONResponse
     import uvicorn
+    from fastapi import FastAPI, HTTPException
+    from fastapi.middleware.cors import CORSMiddleware
+    from starlette.responses import FileResponse
 
     # Create FastAPI app
     app = FastAPI(

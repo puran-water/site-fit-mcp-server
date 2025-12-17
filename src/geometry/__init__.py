@@ -1,25 +1,25 @@
 """Geometry operations for site layout using Shapely and pyclipper."""
 
-from .polygon_ops import (
-    compute_buildable_area,
-    inset_polygon,
-    buffer_polygon,
-    polygon_from_coords,
-    polygon_to_coords,
-    union_polygons,
-    subtract_polygons,
+from .clearance import (
+    ClearanceViolation,
+    check_clearance_violations,
+    compute_pairwise_distances,
+    get_minimum_clearance,
 )
 from .containment import (
+    ContainmentResult,
     check_containment,
     check_placement_valid,
     get_valid_placement_region,
-    ContainmentResult,
 )
-from .clearance import (
-    compute_pairwise_distances,
-    check_clearance_violations,
-    get_minimum_clearance,
-    ClearanceViolation,
+from .polygon_ops import (
+    buffer_polygon,
+    compute_buildable_area,
+    inset_polygon,
+    polygon_from_coords,
+    polygon_to_coords,
+    subtract_polygons,
+    union_polygons,
 )
 
 __all__ = [

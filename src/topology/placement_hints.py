@@ -5,18 +5,15 @@ for the CP-SAT placement solver.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
-
-import networkx as nx
 
 from ..models.topology import TopologyGraph
 from .graph_analysis import (
-    compute_topological_ranks,
-    compute_sccs,
     compute_area_clusters,
+    compute_node_degrees,
+    compute_sccs,
+    compute_topological_ranks,
     get_adjacency_pairs,
     get_flow_precedence_pairs,
-    compute_node_degrees,
     identify_critical_path,
 )
 
@@ -33,31 +30,31 @@ class PlacementHints:
     """
 
     # Node ID -> preferred x-layer (0 = west/inlet)
-    target_ranks: Dict[str, int] = field(default_factory=dict)
+    target_ranks: dict[str, int] = field(default_factory=dict)
 
     # (node1, node2) -> proximity weight (higher = should be closer)
-    adjacency_weights: Dict[Tuple[str, str], float] = field(default_factory=dict)
+    adjacency_weights: dict[tuple[str, str], float] = field(default_factory=dict)
 
     # List of (upstream, downstream) pairs for flow direction
-    flow_precedence: List[Tuple[str, str]] = field(default_factory=list)
+    flow_precedence: list[tuple[str, str]] = field(default_factory=list)
 
     # Cluster ID -> list of node IDs (should be grouped)
-    cluster_assignments: Dict[int, List[str]] = field(default_factory=dict)
+    cluster_assignments: dict[int, list[str]] = field(default_factory=dict)
 
     # Nodes on critical path (most important for alignment)
-    critical_path: List[str] = field(default_factory=list)
+    critical_path: list[str] = field(default_factory=list)
 
     # Node ID -> (in_degree, out_degree) for prioritization
-    node_degrees: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    node_degrees: dict[str, tuple[int, int]] = field(default_factory=dict)
 
     # Node ID -> SCC ID (recycle loops)
-    scc_membership: Dict[str, int] = field(default_factory=dict)
+    scc_membership: dict[str, int] = field(default_factory=dict)
 
     # Source nodes (should be near west edge)
-    source_nodes: Set[str] = field(default_factory=set)
+    source_nodes: set[str] = field(default_factory=set)
 
     # Sink nodes (should be near east edge)
-    sink_nodes: Set[str] = field(default_factory=set)
+    sink_nodes: set[str] = field(default_factory=set)
 
     def get_rank_for_node(self, node_id: str) -> int:
         """Get target rank for a node, defaulting to 0."""
@@ -81,7 +78,7 @@ class PlacementHints:
         scc2 = self.scc_membership.get(node2)
         return scc1 is not None and scc1 == scc2
 
-    def get_high_priority_nodes(self, top_n: int = 5) -> List[str]:
+    def get_high_priority_nodes(self, top_n: int = 5) -> list[str]:
         """Get nodes with highest connectivity (most edges).
 
         These are hub nodes that should be central in the layout.
@@ -104,7 +101,7 @@ class PlacementHints:
             return 1
         return max(self.target_ranks.values()) + 1
 
-    def translate_with_node_map(self, node_map: Dict[str, str]) -> "PlacementHints":
+    def translate_with_node_map(self, node_map: dict[str, str]) -> "PlacementHints":
         """Translate hints using a node_map from topology IDs to structure IDs.
 
         Args:
@@ -212,7 +209,7 @@ def compute_placement_hints(
                 hints.adjacency_weights[key] = current + area_cluster_weight
 
     # Boost weights for same-SCC pairs
-    scc_groups: Dict[int, List[str]] = {}
+    scc_groups: dict[int, list[str]] = {}
     for node_id, scc_id in hints.scc_membership.items():
         if scc_id not in scc_groups:
             scc_groups[scc_id] = []
@@ -249,7 +246,7 @@ def ranks_to_x_bands(
     hints: PlacementHints,
     site_width: float,
     margin: float = 10.0,
-) -> Dict[str, Tuple[float, float]]:
+) -> dict[str, tuple[float, float]]:
     """Convert topological ranks to x-coordinate bands.
 
     Maps each rank to a horizontal band of the site, ensuring
@@ -282,8 +279,8 @@ def ranks_to_x_bands(
 
 def get_cluster_centroids(
     hints: PlacementHints,
-    structure_positions: Dict[str, Tuple[float, float]],
-) -> Dict[int, Tuple[float, float]]:
+    structure_positions: dict[str, tuple[float, float]],
+) -> dict[int, tuple[float, float]]:
     """Compute centroid of each area cluster based on placed structures.
 
     Useful for validating cluster cohesion after placement.
@@ -313,7 +310,7 @@ def get_cluster_centroids(
 
 def compute_flow_violation_score(
     hints: PlacementHints,
-    structure_positions: Dict[str, Tuple[float, float]],
+    structure_positions: dict[str, tuple[float, float]],
 ) -> float:
     """Compute penalty score for flow direction violations.
 

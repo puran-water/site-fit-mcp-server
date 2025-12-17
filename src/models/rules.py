@@ -1,7 +1,6 @@
 """Engineering rules and constraints for site layout."""
 
-from typing import Dict, List, Optional, Tuple
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 
 class AccessRules(BaseModel):
@@ -42,13 +41,13 @@ class SetbackRules(BaseModel):
     property_line_default: float = Field(
         default=7.5, ge=0, description="Default setback from property line in meters"
     )
-    property_line_front: Optional[float] = Field(
+    property_line_front: float | None = Field(
         default=None, ge=0, description="Front property line setback (overrides default)"
     )
-    property_line_rear: Optional[float] = Field(
+    property_line_rear: float | None = Field(
         default=None, ge=0, description="Rear property line setback (overrides default)"
     )
-    property_line_side: Optional[float] = Field(
+    property_line_side: float | None = Field(
         default=None, ge=0, description="Side property line setback (overrides default)"
     )
     wetland_buffer: float = Field(
@@ -69,7 +68,7 @@ class RuleSet(BaseModel):
     setbacks: SetbackRules = Field(default_factory=SetbackRules, description="Setback rules")
 
     # Equipment-to-boundary setbacks (by equipment type)
-    equipment_to_boundary: Dict[str, float] = Field(
+    equipment_to_boundary: dict[str, float] = Field(
         default_factory=lambda: {
             "default": 5.0,
             "digester": 15.0,
@@ -81,7 +80,7 @@ class RuleSet(BaseModel):
 
     # Equipment-to-equipment clearances (pairwise matrix)
     # Keys are "type1_to_type2" or "type1_type2" for symmetric
-    equipment_clearances: Dict[str, float] = Field(
+    equipment_clearances: dict[str, float] = Field(
         default_factory=lambda: {
             "default": 3.0,
             "digester_to_any": 10.0,
@@ -95,7 +94,7 @@ class RuleSet(BaseModel):
     )
 
     # Fire separation requirements (override clearances when larger)
-    fire_separation: Dict[str, float] = Field(
+    fire_separation: dict[str, float] = Field(
         default_factory=lambda: {
             "default": 0.0,  # No fire separation by default
             "flare_to_any": 75.0,
@@ -117,13 +116,13 @@ class RuleSet(BaseModel):
     )
 
     # NFPA 820 hazardous area zone configurations
-    nfpa820_zones: Dict[str, NFPA820ZoneConfig] = Field(
+    nfpa820_zones: dict[str, NFPA820ZoneConfig] = Field(
         default_factory=dict,
         description="NFPA 820 hazardous area zone radii by equipment type"
     )
 
     # Equipment types that must be outside hazard zones
-    hazard_zone_exclusions: List[str] = Field(
+    hazard_zone_exclusions: list[str] = Field(
         default_factory=lambda: [
             "electrical_building",
             "control_building",
@@ -134,7 +133,7 @@ class RuleSet(BaseModel):
         description="Equipment types that must be placed outside Class I hazard zones"
     )
 
-    def get_nfpa820_zone(self, equipment_type: str) -> Optional[NFPA820ZoneConfig]:
+    def get_nfpa820_zone(self, equipment_type: str) -> NFPA820ZoneConfig | None:
         """Get NFPA 820 zone configuration for an equipment type."""
         # Check exact match first
         if equipment_type in self.nfpa820_zones:
@@ -217,7 +216,7 @@ class RuleSet(BaseModel):
         data = yaml.safe_load(yaml_content)
         return cls(**data)
 
-    def merge_override(self, override: Dict) -> "RuleSet":
+    def merge_override(self, override: dict) -> "RuleSet":
         """Merge override dict into this ruleset (JSON merge patch semantics)."""
         import json
         base = json.loads(self.model_dump_json())
@@ -225,7 +224,7 @@ class RuleSet(BaseModel):
         return RuleSet(**base)
 
 
-def _deep_merge(base: Dict, override: Dict) -> None:
+def _deep_merge(base: dict, override: dict) -> None:
     """Deep merge override into base dict (modifies base in place)."""
     for key, value in override.items():
         if key in base and isinstance(base[key], dict) and isinstance(value, dict):
