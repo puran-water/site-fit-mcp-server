@@ -1,26 +1,26 @@
 """Export utilities for solutions."""
 
 from .geojson import (
-    solution_to_geojson,
     placements_to_geojson,
     road_network_to_geojson,
-)
-from .svg import (
-    export_solution_to_svg,
-    export_comparison_svg,
-)
-from .quantities import (
-    compute_quantities,
-    QuantityTakeoff,
+    solution_to_geojson,
 )
 from .pack import (
-    export_pack,
     ExportPackResult,
+    export_pack,
+)
+from .quantities import (
+    QuantityTakeoff,
+    compute_quantities,
+)
+from .svg import (
+    export_comparison_svg,
+    export_solution_to_svg,
 )
 
 # DXF export is optional (requires ezdxf)
 try:
-    from .dxf import solution_to_dxf, save_solution_to_dxf
+    from .dxf import save_solution_to_dxf, solution_to_dxf
     _HAS_DXF = True
 except ImportError:
     _HAS_DXF = False
@@ -39,7 +39,7 @@ except ImportError:
 
 # PDF export is optional (requires weasyprint)
 try:
-    from .pdf_report import generate_pdf_report, PDFReportConfig
+    from .pdf_report import PDFReportConfig, generate_pdf_report
     _HAS_PDF = True
 except ImportError:
     _HAS_PDF = False

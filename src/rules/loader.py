@@ -8,7 +8,6 @@ Provides functions to:
 
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import yaml
 
@@ -38,7 +37,7 @@ def get_ruleset_path(name: str = "default") -> Path:
     return path
 
 
-def list_rulesets() -> List[Dict[str, str]]:
+def list_rulesets() -> list[dict[str, str]]:
     """List all available rulesets.
 
     Returns:
@@ -64,7 +63,7 @@ def list_rulesets() -> List[Dict[str, str]]:
 def _extract_description(yaml_path: Path) -> str:
     """Extract description from first comment line of YAML file."""
     try:
-        with open(yaml_path, "r") as f:
+        with open(yaml_path) as f:
             first_line = f.readline().strip()
             if first_line.startswith("#"):
                 return first_line.lstrip("#").strip()
@@ -75,7 +74,7 @@ def _extract_description(yaml_path: Path) -> str:
 
 def load_ruleset(
     name: str = "default",
-    override: Optional[Dict] = None,
+    override: dict | None = None,
 ) -> RuleSet:
     """Load a ruleset from YAML file with optional overrides.
 
@@ -88,7 +87,7 @@ def load_ruleset(
     """
     path = get_ruleset_path(name)
 
-    with open(path, "r") as f:
+    with open(path) as f:
         yaml_content = f.read()
 
     ruleset = RuleSet.from_yaml(yaml_content)
@@ -122,7 +121,7 @@ def save_ruleset(ruleset: RuleSet, name: str) -> Path:
     return path
 
 
-def validate_ruleset_yaml(yaml_content: str) -> tuple[bool, Optional[str]]:
+def validate_ruleset_yaml(yaml_content: str) -> tuple[bool, str | None]:
     """Validate YAML content as a valid ruleset.
 
     Args:

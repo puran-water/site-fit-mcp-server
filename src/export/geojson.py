@@ -1,12 +1,12 @@
 """GeoJSON export utilities for site-fit solutions."""
 
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from shapely.geometry import Polygon, Point, LineString, mapping
+from shapely.geometry import Polygon, mapping
 
-from ..models.solution import SiteFitSolution, Placement, RoadNetwork, RoadSegment
+from ..models.site import Entrance, Keepout
+from ..models.solution import Placement, RoadNetwork, SiteFitSolution
 from ..models.structures import PlacedStructure
-from ..models.site import SiteBoundary, Entrance, Keepout
 
 if TYPE_CHECKING:
     from ..hazards.nfpa820_zones import HazardZone
@@ -14,12 +14,12 @@ if TYPE_CHECKING:
 
 def solution_to_geojson(
     solution: SiteFitSolution,
-    boundary: Optional[Polygon] = None,
-    entrances: Optional[List[Entrance]] = None,
-    keepouts: Optional[List[Keepout]] = None,
+    boundary: Polygon | None = None,
+    entrances: list[Entrance] | None = None,
+    keepouts: list[Keepout] | None = None,
     include_labels: bool = True,
-    hazard_zones: Optional[List["HazardZone"]] = None,
-) -> Dict[str, Any]:
+    hazard_zones: list["HazardZone"] | None = None,
+) -> dict[str, Any]:
     """Convert a complete solution to GeoJSON FeatureCollection.
 
     Args:
@@ -126,8 +126,8 @@ def solution_to_geojson(
 
 
 def placements_to_geojson(
-    placements: List[PlacedStructure],
-) -> Dict[str, Any]:
+    placements: list[PlacedStructure],
+) -> dict[str, Any]:
     """Convert placements to GeoJSON FeatureCollection.
 
     Args:
@@ -162,7 +162,7 @@ def placements_to_geojson(
 
 def road_network_to_geojson(
     network: RoadNetwork,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Convert road network to GeoJSON FeatureCollection.
 
     Args:
@@ -184,7 +184,7 @@ def road_network_to_geojson(
     }
 
 
-def road_network_to_features(network: RoadNetwork) -> List[Dict[str, Any]]:
+def road_network_to_features(network: RoadNetwork) -> list[dict[str, Any]]:
     """Convert road network to list of GeoJSON features.
 
     Args:
@@ -221,7 +221,7 @@ def road_network_to_features(network: RoadNetwork) -> List[Dict[str, Any]]:
     return features
 
 
-def _placement_to_feature(placement: Placement) -> Dict[str, Any]:
+def _placement_to_feature(placement: Placement) -> dict[str, Any]:
     """Convert a Placement to GeoJSON Feature.
 
     Delegates to the Placement's to_geojson_geometry() method which
@@ -251,8 +251,8 @@ def _placement_to_feature(placement: Placement) -> Dict[str, Any]:
 
 
 def merge_geojson_collections(
-    *collections: Dict[str, Any],
-) -> Dict[str, Any]:
+    *collections: dict[str, Any],
+) -> dict[str, Any]:
     """Merge multiple GeoJSON FeatureCollections.
 
     Args:
@@ -274,9 +274,9 @@ def merge_geojson_collections(
 
 
 def filter_geojson_by_layer(
-    geojson: Dict[str, Any],
-    layers: List[str],
-) -> Dict[str, Any]:
+    geojson: dict[str, Any],
+    layers: list[str],
+) -> dict[str, Any]:
     """Filter GeoJSON features by layer property.
 
     Args:

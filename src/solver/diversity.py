@@ -7,7 +7,6 @@ by computing multi-dimensional fingerprints and filtering based on distance.
 import logging
 from dataclasses import dataclass, field
 from itertools import combinations
-from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -27,21 +26,21 @@ class SolutionFingerprint:
     """
 
     # Normalized (x, y) positions for each structure
-    normalized_positions: Dict[str, Tuple[float, float]] = field(default_factory=dict)
+    normalized_positions: dict[str, tuple[float, float]] = field(default_factory=dict)
 
     # Set of ordering relationships: (id1, id2, 'east'|'north')
-    orderings: Set[Tuple[str, str, str]] = field(default_factory=set)
+    orderings: set[tuple[str, str, str]] = field(default_factory=set)
 
     # Cluster ID for each structure (from DBSCAN or similar)
-    cluster_assignments: Dict[str, int] = field(default_factory=dict)
+    cluster_assignments: dict[str, int] = field(default_factory=dict)
 
     # Bounding box used for normalization
-    bounds: Tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
+    bounds: tuple[float, float, float, float] = (0.0, 0.0, 1.0, 1.0)
 
     @classmethod
     def from_placements(
         cls,
-        placements: List[PlacedStructure],
+        placements: list[PlacedStructure],
         cluster_eps: float = 15.0,
     ) -> "SolutionFingerprint":
         """Create fingerprint from placement list.
@@ -150,10 +149,10 @@ class SolutionFingerprint:
 
 
 def _compute_clusters(
-    placements: List[PlacedStructure],
+    placements: list[PlacedStructure],
     eps: float = 15.0,
     min_samples: int = 1,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Compute spatial clusters using DBSCAN.
 
     Args:
@@ -188,8 +187,8 @@ def _compute_clusters(
 
 
 def _compute_centroid_distance(
-    pos1: Dict[str, Tuple[float, float]],
-    pos2: Dict[str, Tuple[float, float]],
+    pos1: dict[str, tuple[float, float]],
+    pos2: dict[str, tuple[float, float]],
 ) -> float:
     """Compute average Euclidean distance between normalized positions."""
     if not pos1 or not pos2:
@@ -212,8 +211,8 @@ def _compute_centroid_distance(
 
 
 def _compute_jaccard_distance(
-    set1: Set[Tuple[str, str, str]],
-    set2: Set[Tuple[str, str, str]],
+    set1: set[tuple[str, str, str]],
+    set2: set[tuple[str, str, str]],
 ) -> float:
     """Compute Jaccard distance between ordering sets."""
     if not set1 and not set2:
@@ -230,8 +229,8 @@ def _compute_jaccard_distance(
 
 
 def _compute_cluster_distance(
-    clusters1: Dict[str, int],
-    clusters2: Dict[str, int],
+    clusters1: dict[str, int],
+    clusters2: dict[str, int],
 ) -> float:
     """Compute distance based on cluster agreement (1 - Rand Index)."""
     if not clusters1 or not clusters2:
@@ -263,8 +262,8 @@ def _compute_cluster_distance(
 
 
 def compute_solution_distance(
-    placements1: List[PlacedStructure],
-    placements2: List[PlacedStructure],
+    placements1: list[PlacedStructure],
+    placements2: list[PlacedStructure],
 ) -> float:
     """Compute distance between two solutions.
 
@@ -283,10 +282,10 @@ def compute_solution_distance(
 
 
 def filter_diverse_solutions(
-    solutions: List["SolutionEntry"],
+    solutions: list["SolutionEntry"],
     target_count: int,
     min_distance: float = 0.1,
-) -> List["SolutionEntry"]:
+) -> list["SolutionEntry"]:
     """Select diverse solutions using greedy max-min distance selection.
 
     Algorithm:

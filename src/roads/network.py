@@ -2,18 +2,16 @@
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
 
 import networkx as nx
-from shapely.geometry import LineString, Point, Polygon, MultiLineString
-from shapely.ops import linemerge, unary_union
+from shapely.geometry import LineString, Point, Polygon
 
-from ..models.site import Entrance
-from ..models.structures import PlacedStructure
-from ..models.solution import RoadSegment, RoadNetwork
 from ..models.rules import RuleSet
-from .dock_zones import DockZone, generate_dock_zones
-from .pathfinder import CostGrid, create_cost_grid, find_road_path, PathfinderResult
+from ..models.site import Entrance
+from ..models.solution import RoadNetwork, RoadSegment
+from ..models.structures import PlacedStructure
+from .dock_zones import generate_dock_zones
+from .pathfinder import create_cost_grid, find_road_path
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +22,10 @@ class RoadValidationResult:
 
     is_valid: bool
     all_docks_accessible: bool
-    accessible_docks: Set[str]
-    inaccessible_docks: Set[str]
+    accessible_docks: set[str]
+    inaccessible_docks: set[str]
     total_road_length: float
-    issues: List[str] = field(default_factory=list)
+    issues: list[str] = field(default_factory=list)
 
 
 class RoadNetworkBuilder:
@@ -35,12 +33,12 @@ class RoadNetworkBuilder:
 
     def __init__(
         self,
-        structures: List[PlacedStructure],
-        entrances: List[Entrance],
+        structures: list[PlacedStructure],
+        entrances: list[Entrance],
         boundary: Polygon,
         rules: RuleSet,
         grid_resolution: float = 1.0,
-        keepouts: Optional[List[Polygon]] = None,
+        keepouts: list[Polygon] | None = None,
     ):
         """Initialize road network builder.
 
@@ -132,7 +130,7 @@ class RoadNetworkBuilder:
         connect_all_docks: bool = True,
         use_steiner: bool = True,
         steiner_threshold: int = 3,
-    ) -> Optional[RoadNetwork]:
+    ) -> RoadNetwork | None:
         """Build road network connecting entrances to docks.
 
         For networks with multiple docks, uses Steiner tree optimization
@@ -176,11 +174,11 @@ class RoadNetworkBuilder:
 
         # Greedy approach: route to each dock sequentially
         # Track road segments
-        segments: List[RoadSegment] = []
-        segment_lines: List[LineString] = []  # For spatial queries
+        segments: list[RoadSegment] = []
+        segment_lines: list[LineString] = []  # For spatial queries
 
         # Track connected docks
-        connected_docks: Set[str] = set()
+        connected_docks: set[str] = set()
 
         # Sort docks by priority (required first, then by distance)
         sorted_docks = sorted(
@@ -243,10 +241,10 @@ class RoadNetworkBuilder:
 
     def _find_best_start(
         self,
-        entrance: Tuple[float, float],
-        target: Tuple[float, float],
-        existing_roads: List[LineString],
-    ) -> Tuple[Tuple[float, float], str]:
+        entrance: tuple[float, float],
+        target: tuple[float, float],
+        existing_roads: list[LineString],
+    ) -> tuple[tuple[float, float], str]:
         """Find best starting point for new road segment.
 
         Checks if connecting from existing road is shorter than from entrance.
@@ -281,7 +279,7 @@ class RoadNetworkBuilder:
 
     def _create_segment(
         self,
-        path: List[Tuple[float, float]],
+        path: list[tuple[float, float]],
         start_id: str,
         end_id: str,
     ) -> RoadSegment:
@@ -307,15 +305,15 @@ class RoadNetworkBuilder:
         )
 
     @staticmethod
-    def _distance(p1: Tuple[float, float], p2: Tuple[float, float]) -> float:
+    def _distance(p1: tuple[float, float], p2: tuple[float, float]) -> float:
         """Euclidean distance between two points."""
         return ((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2) ** 0.5
 
     def _build_steiner_network(
         self,
-        entrance_pt: Tuple[float, float],
+        entrance_pt: tuple[float, float],
         connect_all_docks: bool = True,
-    ) -> Optional[RoadNetwork]:
+    ) -> RoadNetwork | None:
         """Build road network using Steiner tree for optimal topology.
 
         Uses NetworkX's Steiner tree approximation to find the minimum-cost
@@ -330,7 +328,7 @@ class RoadNetworkBuilder:
             RoadNetwork or None if building fails
         """
         # Collect terminal nodes: entrance + all dock access points
-        terminals: Dict[str, Tuple[float, float]] = {"entrance": entrance_pt}
+        terminals: dict[str, tuple[float, float]] = {"entrance": entrance_pt}
         for dock in self.dock_zones:
             terminals[dock.structure_id] = dock.access_point
 
@@ -340,32 +338,32 @@ class RoadNetworkBuilder:
 
         # Build complete graph with Euclidean distance as edge weights
         # This is a heuristic - actual A* paths may differ due to obstacles
-        G = nx.Graph()
+        graph = nx.Graph()
         terminal_ids = list(terminals.keys())
 
         for i, id1 in enumerate(terminal_ids):
             pt1 = terminals[id1]
-            G.add_node(id1, pos=pt1)
+            graph.add_node(id1, pos=pt1)
             for id2 in terminal_ids[i + 1:]:
                 pt2 = terminals[id2]
                 dist = self._distance(pt1, pt2)
-                G.add_edge(id1, id2, weight=dist)
+                graph.add_edge(id1, id2, weight=dist)
 
         # Compute Steiner tree (all nodes are terminals in this case)
         # This effectively computes minimum spanning tree for our complete graph
         try:
             steiner = nx.algorithms.approximation.steiner_tree(
-                G, terminal_ids, weight="weight"
+                graph, terminal_ids, weight="weight"
             )
         except Exception as e:
             logger.warning(f"Steiner tree computation failed: {e}")
             return None
 
         # Route each edge of the Steiner tree using A*
-        segments: List[RoadSegment] = []
-        segment_lines: List[LineString] = []
-        connected_docks: Set[str] = set()
-        failed_edges: List[Tuple[str, str]] = []
+        segments: list[RoadSegment] = []
+        segment_lines: list[LineString] = []
+        connected_docks: set[str] = set()
+        failed_edges: list[tuple[str, str]] = []
 
         for u, v in steiner.edges():
             pt_u = terminals[u]
@@ -432,12 +430,12 @@ class RoadNetworkBuilder:
 
 def validate_road_network(
     network: RoadNetwork,
-    structures: List[PlacedStructure],
-    entrances: List[Entrance],
+    structures: list[PlacedStructure],
+    entrances: list[Entrance],
     require_all_accessible: bool = True,
     min_turning_radius: float = 12.0,
     validate_turning: bool = True,
-    structure_turning_radii: Optional[Dict[str, float]] = None,
+    structure_turning_radii: dict[str, float] | None = None,
 ) -> RoadValidationResult:
     """Validate a road network.
 
@@ -504,7 +502,7 @@ def validate_road_network(
             # Determine minimum turning radius for this segment
             # Check if any connected structure has a specific requirement
             segment_min_radius = min_turning_radius
-            violated_by_structure: Optional[str] = None
+            violated_by_structure: str | None = None
 
             for connected_id in segment.connects_to:
                 if connected_id in structure_turning_radii:
@@ -555,9 +553,9 @@ def validate_road_network(
 def validate_road_polygon_containment(
     network: RoadNetwork,
     boundary: Polygon,
-    keepouts: Optional[List[Polygon]] = None,
+    keepouts: list[Polygon] | None = None,
     tolerance: float = 0.5,
-) -> Tuple[bool, List[str]]:
+) -> tuple[bool, list[str]]:
     """Validate that road polygons (buffered centerlines) stay inside boundary.
 
     This is a final check ensuring the actual road surface doesn't extend
@@ -662,16 +660,16 @@ def compute_adaptive_grid_resolution(
 
 
 def build_road_network_for_solution(
-    placements: List[PlacedStructure],
-    entrances: List[Entrance],
+    placements: list[PlacedStructure],
+    entrances: list[Entrance],
     boundary: Polygon,
     rules: RuleSet,
-    keepouts: Optional[List[Polygon]] = None,
+    keepouts: list[Polygon] | None = None,
     validate_containment: bool = True,
     validate_turning: bool = True,
     min_turning_radius: float = 12.0,
-    grid_resolution: Optional[float] = None,
-) -> Optional[RoadNetwork]:
+    grid_resolution: float | None = None,
+) -> RoadNetwork | None:
     """Convenience function to build road network for a solution.
 
     Args:
@@ -723,7 +721,7 @@ def build_road_network_for_solution(
     # Validate turning radius if requested
     if validate_turning:
         # Extract per-structure turning radii from access requirements
-        structure_turning_radii: Dict[str, float] = {}
+        structure_turning_radii: dict[str, float] = {}
         for p in placements:
             if p.structure.access and p.structure.access.turning_radius:
                 structure_turning_radii[p.structure_id] = p.structure.access.turning_radius

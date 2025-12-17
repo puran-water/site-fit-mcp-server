@@ -2,12 +2,10 @@
 
 import heapq
 import logging
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
+from dataclasses import dataclass
 
 import numpy as np
 from shapely.geometry import LineString, Point, Polygon
-from shapely.ops import unary_union
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +15,12 @@ class PathfinderResult:
     """Result from pathfinding."""
 
     success: bool
-    path: List[Tuple[float, float]]  # List of waypoints
+    path: list[tuple[float, float]]  # List of waypoints
     cost: float
     length: float  # Path length in meters
-    message: Optional[str] = None
+    message: str | None = None
 
-    def to_linestring(self) -> Optional[LineString]:
+    def to_linestring(self) -> LineString | None:
         """Convert path to Shapely LineString."""
         if not self.path or len(self.path) < 2:
             return None
@@ -44,7 +42,7 @@ class CostGrid:
 
     def __init__(
         self,
-        bounds: Tuple[float, float, float, float],  # min_x, min_y, max_x, max_y
+        bounds: tuple[float, float, float, float],  # min_x, min_y, max_x, max_y
         resolution: float = 1.0,  # Grid cell size in meters
         base_cost: float = 1.0,
         obstacle_cost: float = float('inf'),
@@ -70,7 +68,7 @@ class CostGrid:
         self.costs = np.full((self.height, self.width), base_cost, dtype=float)
         self.obstacles = np.zeros((self.height, self.width), dtype=bool)
 
-    def world_to_grid(self, x: float, y: float) -> Tuple[int, int]:
+    def world_to_grid(self, x: float, y: float) -> tuple[int, int]:
         """Convert world coordinates to grid indices."""
         min_x, min_y, _, _ = self.bounds
         gx = int((x - min_x) / self.resolution)
@@ -80,7 +78,7 @@ class CostGrid:
             max(0, min(gy, self.height - 1)),
         )
 
-    def grid_to_world(self, gx: int, gy: int) -> Tuple[float, float]:
+    def grid_to_world(self, gx: int, gy: int) -> tuple[float, float]:
         """Convert grid indices to world coordinates (cell center)."""
         min_x, min_y, _, _ = self.bounds
         x = min_x + (gx + 0.5) * self.resolution
@@ -152,8 +150,8 @@ class CostGrid:
 
 
 def create_cost_grid(
-    bounds: Tuple[float, float, float, float],
-    obstacles: List[Polygon],
+    bounds: tuple[float, float, float, float],
+    obstacles: list[Polygon],
     resolution: float = 1.0,
     obstacle_buffer: float = 1.0,
     near_obstacle_cost: float = 2.0,
@@ -194,8 +192,8 @@ def create_cost_grid(
 
 
 def find_road_path(
-    start: Tuple[float, float],
-    end: Tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
     cost_grid: CostGrid,
     allow_diagonal: bool = False,
 ) -> PathfinderResult:
@@ -271,11 +269,11 @@ def find_road_path(
 
 
 def _astar(
-    start: Tuple[int, int],
-    end: Tuple[int, int],
+    start: tuple[int, int],
+    end: tuple[int, int],
     grid: CostGrid,
     allow_diagonal: bool,
-) -> Optional[List[Tuple[int, int]]]:
+) -> list[tuple[int, int]] | None:
     """A* pathfinding on grid.
 
     Args:
@@ -303,7 +301,7 @@ def _astar(
         neighbors = [(0, 1), (1, 0), (0, -1), (-1, 0)]
         diag_cost = 1.0
 
-    def heuristic(a: Tuple[int, int], b: Tuple[int, int]) -> float:
+    def heuristic(a: tuple[int, int], b: tuple[int, int]) -> float:
         # Manhattan distance for 4-dir, Euclidean for 8-dir
         if allow_diagonal:
             return np.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2)
@@ -312,9 +310,9 @@ def _astar(
     # Priority queue: (f_score, counter, cell)
     counter = 0
     open_set = [(heuristic(start, end), counter, start)]
-    came_from: Dict[Tuple[int, int], Tuple[int, int]] = {}
-    g_score: Dict[Tuple[int, int], float] = {start: 0}
-    closed_set: Set[Tuple[int, int]] = set()
+    came_from: dict[tuple[int, int], tuple[int, int]] = {}
+    g_score: dict[tuple[int, int], float] = {start: 0}
+    closed_set: set[tuple[int, int]] = set()
 
     while open_set:
         _, _, current = heapq.heappop(open_set)
@@ -355,9 +353,9 @@ def _astar(
 
 
 def _simplify_path(
-    path: List[Tuple[float, float]],
+    path: list[tuple[float, float]],
     grid: CostGrid,
-) -> List[Tuple[float, float]]:
+) -> list[tuple[float, float]]:
     """Simplify path by removing unnecessary waypoints.
 
     Uses line-of-sight check to skip intermediate points.
@@ -390,8 +388,8 @@ def _simplify_path(
 
 
 def _has_line_of_sight(
-    p1: Tuple[float, float],
-    p2: Tuple[float, float],
+    p1: tuple[float, float],
+    p2: tuple[float, float],
     grid: CostGrid,
 ) -> bool:
     """Check if there's clear line of sight between two points.

@@ -13,9 +13,9 @@ Uses Fiona/GDAL for file reading and PyProj for CRS transformations.
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
-from shapely.geometry import shape, Polygon, Point, MultiPolygon
+from shapely.geometry import MultiPolygon, Point, Polygon, shape
 from shapely.ops import transform
 
 logger = logging.getLogger(__name__)
@@ -25,21 +25,21 @@ logger = logging.getLogger(__name__)
 class GISLoadResult:
     """Result from loading a GIS file."""
 
-    boundary: Optional[List[List[float]]] = None
+    boundary: list[list[float]] | None = None
     boundary_area: float = 0.0
-    keepouts: List[Dict[str, Any]] = field(default_factory=list)
-    entrances: List[Dict[str, Any]] = field(default_factory=list)
-    source_crs: Optional[str] = None
-    warnings: List[str] = field(default_factory=list)
-    layers_found: List[str] = field(default_factory=list)
+    keepouts: list[dict[str, Any]] = field(default_factory=list)
+    entrances: list[dict[str, Any]] = field(default_factory=list)
+    source_crs: str | None = None
+    warnings: list[str] = field(default_factory=list)
+    layers_found: list[str] = field(default_factory=list)
 
 
 def load_site_from_file(
-    file_path: Union[str, Path],
-    boundary_layer: Optional[str] = None,
-    keepout_layers: Optional[List[str]] = None,
-    entrance_layer: Optional[str] = None,
-    target_crs: Optional[str] = None,
+    file_path: str | Path,
+    boundary_layer: str | None = None,
+    keepout_layers: list[str] | None = None,
+    entrance_layer: str | None = None,
+    target_crs: str | None = None,
     auto_detect: bool = True,
 ) -> GISLoadResult:
     """Load site definition from a GIS file.
@@ -236,7 +236,7 @@ def load_site_from_file(
     return result
 
 
-def detect_boundary_layer(layers: List[str]) -> Optional[str]:
+def detect_boundary_layer(layers: list[str]) -> str | None:
     """Detect the boundary layer from layer names.
 
     Looks for layers with names suggesting they contain site boundaries.
@@ -260,7 +260,7 @@ def detect_boundary_layer(layers: List[str]) -> Optional[str]:
     return None
 
 
-def detect_keepout_layers(layers: List[str]) -> List[str]:
+def detect_keepout_layers(layers: list[str]) -> list[str]:
     """Detect keepout layers from layer names.
 
     Looks for layers with names suggesting they contain restricted areas.
@@ -283,7 +283,7 @@ def detect_keepout_layers(layers: List[str]) -> List[str]:
     return matches
 
 
-def detect_entrance_layer(layers: List[str]) -> Optional[str]:
+def detect_entrance_layer(layers: list[str]) -> str | None:
     """Detect the entrance layer from layer names.
 
     Looks for layers with names suggesting they contain access points.
@@ -303,7 +303,7 @@ def detect_entrance_layer(layers: List[str]) -> Optional[str]:
     return None
 
 
-def _get_feature_reason(feature: Dict[str, Any], layer_name: str) -> str:
+def _get_feature_reason(feature: dict[str, Any], layer_name: str) -> str:
     """Extract a reason/description from feature properties."""
     props = feature.get("properties", {}) or {}
 
@@ -316,7 +316,7 @@ def _get_feature_reason(feature: Dict[str, Any], layer_name: str) -> str:
     return layer_name
 
 
-def list_gis_layers(file_path: Union[str, Path]) -> List[Dict[str, Any]]:
+def list_gis_layers(file_path: str | Path) -> list[dict[str, Any]]:
     """List all layers in a GIS file with basic metadata.
 
     Args:

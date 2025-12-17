@@ -2,11 +2,11 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from ortools.sat.python import cp_model
 
-from ..models.structures import StructureFootprint, PlacedStructure
+from ..models.structures import PlacedStructure, StructureFootprint
 
 if TYPE_CHECKING:
     from .cpsat_placer import StructureVars
@@ -23,8 +23,8 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
     def __init__(
         self,
         model: cp_model.CpModel,
-        struct_vars: Dict[str, "StructureVars"],  # Forward reference
-        structures: List[StructureFootprint],
+        struct_vars: dict[str, "StructureVars"],  # Forward reference
+        structures: list[StructureFootprint],
         grid_resolution: float = 1.0,
         max_solutions: int = 100,
     ):
@@ -44,8 +44,8 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
         self.grid_resolution = grid_resolution
         self.max_solutions = max_solutions
 
-        self._solutions: List[List[PlacedStructure]] = []
-        self._objectives: List[Optional[float]] = []
+        self._solutions: list[list[PlacedStructure]] = []
+        self._objectives: list[float | None] = []
         self._solution_count = 0
 
     def on_solution_callback(self):
@@ -105,13 +105,13 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
             f"objective={obj_val if obj_val is not None else 'N/A'}"
         )
 
-    def get_solutions(self) -> List[List[PlacedStructure]]:
+    def get_solutions(self) -> list[list[PlacedStructure]]:
         """Get all collected solutions."""
         return self._solutions
 
     def get_solutions_with_objectives(
         self,
-    ) -> List[Tuple[List[PlacedStructure], Optional[float]]]:
+    ) -> list[tuple[list[PlacedStructure], float | None]]:
         """Get all solutions paired with their objective values.
 
         Returns:
@@ -119,7 +119,7 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
         """
         return list(zip(self._solutions, self._objectives))
 
-    def get_objectives(self) -> List[Optional[float]]:
+    def get_objectives(self) -> list[float | None]:
         """Get all objective values in order."""
         return self._objectives
 
@@ -133,8 +133,8 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
 class SolutionEntry:
     """A solution entry in the pool."""
 
-    placements: List[PlacedStructure]
-    objective_value: Optional[float] = None
+    placements: list[PlacedStructure]
+    objective_value: float | None = None
     rank: int = 0
     fingerprint: Optional["SolutionFingerprint"] = None  # Forward ref
 
@@ -152,12 +152,12 @@ class SolutionPool:
             max_size: Maximum solutions to keep in pool
         """
         self.max_size = max_size
-        self._entries: List[SolutionEntry] = []
+        self._entries: list[SolutionEntry] = []
 
     def add(
         self,
-        placements: List[PlacedStructure],
-        objective_value: Optional[float] = None,
+        placements: list[PlacedStructure],
+        objective_value: float | None = None,
     ) -> bool:
         """Add a solution to the pool.
 
@@ -195,7 +195,7 @@ class SolutionPool:
 
         return True
 
-    def _compute_placement_hash(self, placements: List[PlacedStructure]) -> tuple:
+    def _compute_placement_hash(self, placements: list[PlacedStructure]) -> tuple:
         """Compute hash of placement positions for deduplication."""
         # Round to grid resolution (1m) for comparison
         positions = []
@@ -208,11 +208,11 @@ class SolutionPool:
             ))
         return tuple(positions)
 
-    def get_top_n(self, n: int) -> List[SolutionEntry]:
+    def get_top_n(self, n: int) -> list[SolutionEntry]:
         """Get top N solutions by objective value."""
         return self._entries[:n]
 
-    def get_diverse(self, n: int, min_distance: float = 0.1) -> List[SolutionEntry]:
+    def get_diverse(self, n: int, min_distance: float = 0.1) -> list[SolutionEntry]:
         """Get N diverse solutions using greedy selection.
 
         Args:
@@ -226,7 +226,7 @@ class SolutionPool:
             return self._entries
 
         # Use diversity module for selection
-        from .diversity import filter_diverse_solutions, SolutionFingerprint
+        from .diversity import SolutionFingerprint, filter_diverse_solutions
 
         # Compute fingerprints
         fingerprinted = []

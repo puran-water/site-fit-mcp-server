@@ -4,10 +4,11 @@ Provides robust polygon inset, buffer, union, and subtraction operations
 for computing buildable areas and structure footprints.
 """
 
-import logging
-from typing import List, Optional, Tuple, Union
+from __future__ import annotations
 
-from shapely.geometry import Polygon, MultiPolygon, mapping, shape
+import logging
+
+from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 from shapely.validation import make_valid
 
@@ -21,8 +22,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 # Type aliases
-Coords = List[Tuple[float, float]]
-PolygonLike = Union[Polygon, MultiPolygon]
+Coords = list[tuple[float, float]]
+PolygonLike = Polygon | MultiPolygon
 
 
 def polygon_from_coords(coords: Coords) -> Polygon:
@@ -185,7 +186,7 @@ def buffer_polygon(
     return result
 
 
-def union_polygons(polygons: List[PolygonLike]) -> PolygonLike:
+def union_polygons(polygons: list[PolygonLike]) -> PolygonLike:
     """Compute union of multiple polygons.
 
     Args:
@@ -213,7 +214,7 @@ def union_polygons(polygons: List[PolygonLike]) -> PolygonLike:
 
 def subtract_polygons(
     base: PolygonLike,
-    subtract: List[PolygonLike],
+    subtract: list[PolygonLike],
 ) -> PolygonLike:
     """Subtract multiple polygons from base polygon.
 
@@ -246,10 +247,10 @@ def subtract_polygons(
 def compute_buildable_area(
     boundary: PolygonLike,
     setback: float,
-    keepouts: Optional[List[PolygonLike]] = None,
-    existing: Optional[List[PolygonLike]] = None,
-    keepout_buffers: Optional[List[float]] = None,
-    existing_buffers: Optional[List[float]] = None,
+    keepouts: list[PolygonLike] | None = None,
+    existing: list[PolygonLike] | None = None,
+    keepout_buffers: list[float] | None = None,
+    existing_buffers: list[float] | None = None,
 ) -> PolygonLike:
     """Compute the buildable area within a site boundary.
 
@@ -321,7 +322,7 @@ def get_polygon_area(polygon: PolygonLike) -> float:
     return polygon.area
 
 
-def get_polygon_bounds(polygon: PolygonLike) -> Tuple[float, float, float, float]:
+def get_polygon_bounds(polygon: PolygonLike) -> tuple[float, float, float, float]:
     """Get bounding box of polygon.
 
     Args:

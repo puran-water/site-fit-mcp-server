@@ -7,7 +7,6 @@ that respect site boundaries and keepout zones at the solver level.
 
 import logging
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
 
 from shapely.geometry import Point, Polygon
 from shapely.prepared import prep
@@ -25,7 +24,7 @@ class CandidateGrid:
     """
 
     structure_id: str
-    candidates: List[Tuple[float, float]]  # (x, y) in meters
+    candidates: list[tuple[float, float]]  # (x, y) in meters
     grid_resolution: float
     width: float  # Structure width in meters
     height: float  # Structure height in meters
@@ -35,16 +34,16 @@ class CandidateGrid:
         return len(self.candidates)
 
     @property
-    def x_coords(self) -> List[float]:
+    def x_coords(self) -> list[float]:
         """Get list of x coordinates."""
         return [c[0] for c in self.candidates]
 
     @property
-    def y_coords(self) -> List[float]:
+    def y_coords(self) -> list[float]:
         """Get list of y coordinates."""
         return [c[1] for c in self.candidates]
 
-    def to_grid_coords(self) -> Tuple[List[int], List[int]]:
+    def to_grid_coords(self) -> tuple[list[int], list[int]]:
         """Convert to integer grid coordinates for CP-SAT.
 
         Returns:
@@ -61,9 +60,9 @@ def compute_valid_candidates(
     structure_width: float,
     structure_height: float,
     grid_resolution: float = 1.0,
-    keepouts: Optional[List[Polygon]] = None,
+    keepouts: list[Polygon] | None = None,
     structure_id: str = "unknown",
-    orientations: Optional[List[int]] = None,
+    orientations: list[int] | None = None,
 ) -> CandidateGrid:
     """Compute valid placement candidates for a structure.
 
@@ -178,10 +177,10 @@ def compute_valid_candidates(
 
 
 def compute_candidates_for_structures(
-    structures: List,  # List[StructureFootprint]
+    structures: list,  # List[StructureFootprint]
     buildable: Polygon,
     grid_resolution: float = 1.0,
-    keepouts: Optional[List[Polygon]] = None,
+    keepouts: list[Polygon] | None = None,
 ) -> dict[str, CandidateGrid]:
     """Compute valid candidates for all structures.
 
@@ -222,7 +221,7 @@ def compute_candidates_for_structures(
 def candidates_to_element_tables(
     candidate_grid: CandidateGrid,
     grid_resolution: float,
-) -> Tuple[List[int], List[int]]:
+) -> tuple[list[int], list[int]]:
     """Convert candidates to lookup tables for CP-SAT AddElement constraint.
 
     The AddElement constraint allows:

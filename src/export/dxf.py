@@ -3,28 +3,30 @@
 Requires the optional 'dxf' extra: pip install site-fit-mcp-server[dxf]
 """
 
-from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
-import logging
+from __future__ import annotations
 
-from shapely.geometry import Polygon, Point, LineString
+import logging
+from typing import TYPE_CHECKING, Any
+
+from shapely.geometry import Polygon
 
 if TYPE_CHECKING:
-    import ezdxf
     from ezdxf.document import Drawing
+
+    from ..models.site import Entrance, Keepout
     from ..models.solution import SiteFitSolution
-    from ..models.site import Keepout, Entrance
 
 
 logger = logging.getLogger(__name__)
 
 
 def solution_to_dxf(
-    solution: "SiteFitSolution",
-    boundary: Optional[Polygon] = None,
-    entrances: Optional[List["Entrance"]] = None,
-    keepouts: Optional[List["Keepout"]] = None,
+    solution: SiteFitSolution,
+    boundary: Polygon | None = None,
+    entrances: list[Entrance] | None = None,
+    keepouts: list[Keepout] | None = None,
     units: str = "m",
-) -> "Drawing":
+) -> Drawing:
     """Export a site-fit solution to DXF format for CAD integration.
 
     Creates a DXF document with layers:
@@ -57,7 +59,6 @@ def solution_to_dxf(
     try:
         import ezdxf
         from ezdxf import units as dxf_units
-        from ezdxf.enums import TextEntityAlignment
     except ImportError:
         raise ImportError(
             "ezdxf is required for DXF export. "
@@ -103,10 +104,8 @@ def solution_to_dxf(
     return doc
 
 
-def _create_layers(doc: "Drawing") -> None:
+def _create_layers(doc: Drawing) -> None:
     """Create standard layers for site layout."""
-    import ezdxf
-
     layers = [
         ("BOUNDARY", 7),          # White
         ("BUILDLIMIT", 3),        # Green - buildable area after setbacks
@@ -134,14 +133,14 @@ def _add_boundary(msp, boundary: Polygon) -> None:
     msp.add_lwpolyline(points, close=True, dxfattribs={"layer": "BOUNDARY"})
 
 
-def _add_keepouts(msp, keepouts: List["Keepout"]) -> None:
+def _add_keepouts(msp, keepouts: list[Keepout]) -> None:
     """Add keepout zones as hatched polygons."""
     for ko in keepouts:
         coords = ko.geometry.get("coordinates", [[]])
         if coords and coords[0]:
             points = [(c[0], c[1]) for c in coords[0]]
             # Add outline
-            poly = msp.add_lwpolyline(
+            msp.add_lwpolyline(
                 points, close=True,
                 dxfattribs={"layer": "KEEPOUTS"}
             )
@@ -157,7 +156,7 @@ def _add_keepouts(msp, keepouts: List["Keepout"]) -> None:
                 logger.debug(f"Could not add hatch for keepout {ko.id}: {e}")
 
 
-def _add_entrances(msp, entrances: List["Entrance"]) -> None:
+def _add_entrances(msp, entrances: list[Entrance]) -> None:
     """Add entrances as points with markers."""
     for ent in entrances:
         x, y = ent.point[0], ent.point[1]
@@ -178,10 +177,8 @@ def _add_entrances(msp, entrances: List["Entrance"]) -> None:
         )
 
 
-def _add_structure(msp, placement, doc: "Drawing") -> None:
+def _add_structure(msp, placement, doc: Drawing) -> None:
     """Add a structure placement with annotation."""
-    from ezdxf.enums import TextEntityAlignment
-
     # Get structure polygon
     poly = placement.to_shapely_polygon()
 
@@ -241,7 +238,7 @@ def _add_buildable_area(msp, buildable: Polygon) -> None:
     )
 
 
-def _add_hazard_zones(msp, hazard_zones: List[Any]) -> None:
+def _add_hazard_zones(msp, hazard_zones: list[Any]) -> None:
     """Add NFPA 820 hazard zones as hatched polygons."""
     for zone in hazard_zones:
         # Get zone type and polygon
@@ -285,14 +282,14 @@ def _add_hazard_zones(msp, hazard_zones: List[Any]) -> None:
 
 
 def save_solution_to_dxf(
-    solution: "SiteFitSolution",
+    solution: SiteFitSolution,
     filepath: str,
-    boundary: Optional[Polygon] = None,
-    buildable_polygon: Optional[Polygon] = None,
-    entrances: Optional[List["Entrance"]] = None,
-    keepouts: Optional[List["Keepout"]] = None,
-    hazard_zones: Optional[List[Any]] = None,
-    structure_types: Optional[Dict[str, str]] = None,
+    boundary: Polygon | None = None,
+    buildable_polygon: Polygon | None = None,
+    entrances: list[Entrance] | None = None,
+    keepouts: list[Keepout] | None = None,
+    hazard_zones: list[Any] | None = None,
+    structure_types: dict[str, str] | None = None,
     units: str = "m",
 ) -> str:
     """Export solution to DXF file with all engineering layers.

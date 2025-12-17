@@ -7,12 +7,11 @@ Uses NoOverlap2D constraint for structure placement with:
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Set, Tuple
 
 from ortools.sat.python import cp_model
 
-from ..models.structures import StructureFootprint, PlacedStructure
 from ..models.rules import RuleSet
+from ..models.structures import PlacedStructure, StructureFootprint
 from ..topology.placement_hints import PlacementHints
 from .solution_pool import SolutionCollector
 
@@ -63,12 +62,12 @@ class StructureVars:
     structure_id: str
     x_var: cp_model.IntVar
     y_var: cp_model.IntVar
-    orientation_var: Optional[cp_model.IntVar] = None  # None for circles
-    x_interval: Optional[cp_model.IntervalVar] = None
-    y_interval: Optional[cp_model.IntervalVar] = None
+    orientation_var: cp_model.IntVar | None = None  # None for circles
+    x_interval: cp_model.IntervalVar | None = None
+    y_interval: cp_model.IntervalVar | None = None
 
     # Dimensions at each orientation (for rectangles)
-    dims_by_orientation: Dict[int, Tuple[int, int]] = field(default_factory=dict)
+    dims_by_orientation: dict[int, tuple[int, int]] = field(default_factory=dict)
 
     # Whether this is a circular structure
     is_circular: bool = False
@@ -82,9 +81,9 @@ class StructureVars:
 
     # Optional intervals for rotation (keyed by orientation index)
     # Both x and y share the same presence literal per orientation
-    optional_x_intervals: Dict[int, cp_model.IntervalVar] = field(default_factory=dict)
-    optional_y_intervals: Dict[int, cp_model.IntervalVar] = field(default_factory=dict)
-    orientation_presence: Dict[int, cp_model.IntVar] = field(default_factory=dict)
+    optional_x_intervals: dict[int, cp_model.IntervalVar] = field(default_factory=dict)
+    optional_y_intervals: dict[int, cp_model.IntervalVar] = field(default_factory=dict)
+    orientation_presence: dict[int, cp_model.IntVar] = field(default_factory=dict)
 
 
 @dataclass
@@ -92,12 +91,12 @@ class SolverResult:
     """Result from the placement solver."""
 
     status: str  # "optimal", "feasible", "infeasible", "timeout"
-    solutions: List[List[PlacedStructure]]
+    solutions: list[list[PlacedStructure]]
     solve_time_seconds: float
     num_solutions_found: int
-    objective_value: Optional[float] = None
-    statistics: Dict[str, any] = field(default_factory=dict)
-    solution_objectives: List[Optional[float]] = field(default_factory=list)
+    objective_value: float | None = None
+    statistics: dict[str, any] = field(default_factory=dict)
+    solution_objectives: list[float | None] = field(default_factory=list)
 
 
 class PlacementSolver:
@@ -109,11 +108,11 @@ class PlacementSolver:
 
     def __init__(
         self,
-        structures: List[StructureFootprint],
-        bounds: Tuple[float, float, float, float],  # min_x, min_y, max_x, max_y
+        structures: list[StructureFootprint],
+        bounds: tuple[float, float, float, float],  # min_x, min_y, max_x, max_y
         rules: RuleSet,
-        hints: Optional[PlacementHints] = None,
-        config: Optional[PlacementSolverConfig] = None,
+        hints: PlacementHints | None = None,
+        config: PlacementSolverConfig | None = None,
     ):
         """Initialize solver.
 
@@ -134,10 +133,10 @@ class PlacementSolver:
         self.model = cp_model.CpModel()
 
         # Structure variables
-        self.struct_vars: Dict[str, StructureVars] = {}
+        self.struct_vars: dict[str, StructureVars] = {}
 
         # Objectives
-        self.objective_terms: List[cp_model.LinearExpr] = []
+        self.objective_terms: list[cp_model.LinearExpr] = []
 
         # Build the model
         self._build_model()
@@ -627,10 +626,10 @@ class PlacementSolver:
 
 
 def create_solver_from_request(
-    structures: List[StructureFootprint],
-    buildable_bounds: Tuple[float, float, float, float],
+    structures: list[StructureFootprint],
+    buildable_bounds: tuple[float, float, float, float],
     rules: RuleSet,
-    hints: Optional[PlacementHints] = None,
+    hints: PlacementHints | None = None,
     max_solutions: int = 10,
     max_time_seconds: float = 60.0,
     seed: int = 42,

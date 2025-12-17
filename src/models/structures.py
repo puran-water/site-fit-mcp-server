@@ -1,8 +1,9 @@
 """Structure footprint and placement models."""
 
-from typing import List, Literal, Optional, Tuple, Union
-from pydantic import BaseModel, Field, field_validator, model_validator
 import math
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class RectFootprint(BaseModel):
@@ -28,7 +29,7 @@ class RectFootprint(BaseModel):
     def short_side(self) -> float:
         return min(self.w, self.h)
 
-    def get_dims_at_rotation(self, rotation_deg: int) -> Tuple[float, float]:
+    def get_dims_at_rotation(self, rotation_deg: int) -> tuple[float, float]:
         """Get width, height at given rotation (0, 90, 180, 270)."""
         if rotation_deg in (90, 270):
             return self.h, self.w
@@ -53,7 +54,7 @@ class CircleFootprint(BaseModel):
     def circumference(self) -> float:
         return math.pi * self.d
 
-    def get_bounding_square(self, padding: float = 1.0) -> Tuple[float, float]:
+    def get_bounding_square(self, padding: float = 1.0) -> tuple[float, float]:
         """Get bounding square dimensions with optional padding factor."""
         side = self.d * padding
         return side, side
@@ -75,7 +76,7 @@ class AccessRequirement(BaseModel):
         default=6.0, gt=0, description="Required dock/apron width in meters"
     )
     required: bool = Field(default=True, description="Whether access is mandatory")
-    turning_radius: Optional[float] = Field(
+    turning_radius: float | None = Field(
         default=None, ge=0, description="Minimum turning radius for vehicle"
     )
 
@@ -108,7 +109,7 @@ class ServiceEnvelopes(BaseModel):
         default=0.0, ge=0.0,
         description="Additional clearance for maintenance access (all sides)"
     )
-    crane_access_edge: Optional[Literal["N", "S", "E", "W", "long", "short"]] = Field(
+    crane_access_edge: Literal["N", "S", "E", "W", "long", "short"] | None = Field(
         default=None,
         description="Edge requiring crane access strip"
     )
@@ -120,11 +121,11 @@ class ServiceEnvelopes(BaseModel):
         default=20.0, ge=0.0,
         description="Length of crane access strip in meters"
     )
-    laydown_area: Optional[Tuple[float, float]] = Field(
+    laydown_area: tuple[float, float] | None = Field(
         default=None,
         description="Laydown area dimensions (width, length) adjacent to structure"
     )
-    laydown_edge: Optional[Literal["N", "S", "E", "W", "long", "short"]] = Field(
+    laydown_edge: Literal["N", "S", "E", "W", "long", "short"] | None = Field(
         default=None,
         description="Edge where laydown area should be placed"
     )
@@ -137,21 +138,21 @@ class StructureFootprint(BaseModel):
     type: str = Field(
         ..., description="Structure type from BFD: aeration_tank, digester, dewatering_building, etc."
     )
-    footprint: Union[RectFootprint, CircleFootprint] = Field(
+    footprint: RectFootprint | CircleFootprint = Field(
         ..., description="Footprint geometry"
     )
-    orientations_deg: List[int] = Field(
+    orientations_deg: list[int] = Field(
         default=[0, 90, 180, 270],
         description="Allowed orientations in degrees (only applies to rectangles)"
     )
-    height: Optional[float] = Field(default=None, ge=0, description="Structure height in meters")
-    access: Optional[AccessRequirement] = Field(
+    height: float | None = Field(default=None, ge=0, description="Structure height in meters")
+    access: AccessRequirement | None = Field(
         default=None, description="Vehicle access requirement"
     )
-    equipment_tag: Optional[str] = Field(
+    equipment_tag: str | None = Field(
         default=None, description="Equipment tag from BFD (e.g., 230-AS-01)"
     )
-    area_number: Optional[int] = Field(
+    area_number: int | None = Field(
         default=None, description="Process area number from BFD hierarchy"
     )
 
@@ -160,24 +161,24 @@ class StructureFootprint(BaseModel):
         default=False,
         description="If true, structure must be placed at fixed_position"
     )
-    fixed_position: Optional[FixedPosition] = Field(
+    fixed_position: FixedPosition | None = Field(
         default=None,
         description="Fixed position for pinned structures"
     )
-    allowed_zone: Optional[List[List[float]]] = Field(
+    allowed_zone: list[list[float]] | None = Field(
         default=None,
         description="Constraint polygon limiting placement area [[x,y], ...]"
     )
 
     # Service envelope support (Tier 2)
-    service_envelopes: Optional[ServiceEnvelopes] = Field(
+    service_envelopes: ServiceEnvelopes | None = Field(
         default=None,
         description="Service envelope requirements for maintenance/crane access"
     )
 
     @field_validator("orientations_deg")
     @classmethod
-    def validate_orientations(cls, v: List[int]) -> List[int]:
+    def validate_orientations(cls, v: list[int]) -> list[int]:
         """Validate orientation values."""
         valid = {0, 90, 180, 270}
         for o in v:
@@ -193,7 +194,7 @@ class StructureFootprint(BaseModel):
     def is_rect(self) -> bool:
         return isinstance(self.footprint, RectFootprint)
 
-    def get_bounding_dims(self, padding: float = 1.0) -> Tuple[float, float]:
+    def get_bounding_dims(self, padding: float = 1.0) -> tuple[float, float]:
         """Get bounding box dimensions.
 
         For circles, returns square bounding box.
@@ -241,7 +242,7 @@ class PlacedStructure(BaseModel):
     def type(self) -> str:
         return self.structure.type
 
-    def get_current_dims(self) -> Tuple[float, float]:
+    def get_current_dims(self) -> tuple[float, float]:
         """Get width, height at current rotation."""
         if self.structure.is_circle:
             fp = self.structure.footprint  # type: ignore
@@ -250,7 +251,7 @@ class PlacedStructure(BaseModel):
             fp = self.structure.footprint  # type: ignore
             return fp.get_dims_at_rotation(self.rotation_deg)
 
-    def get_bounds(self) -> Tuple[float, float, float, float]:
+    def get_bounds(self) -> tuple[float, float, float, float]:
         """Get axis-aligned bounding box (min_x, min_y, max_x, max_y)."""
         w, h = self.get_current_dims()
         half_w, half_h = w / 2, h / 2
@@ -261,7 +262,7 @@ class PlacedStructure(BaseModel):
             self.y + half_h,
         )
 
-    def get_center(self) -> Tuple[float, float]:
+    def get_center(self) -> tuple[float, float]:
         """Get center point."""
         return self.x, self.y
 
@@ -291,7 +292,7 @@ class PlacedStructure(BaseModel):
         Returns:
             shapely.geometry.Polygon
         """
-        from shapely.geometry import Polygon, Point
+        from shapely.geometry import Point, Polygon
 
         if self.structure.is_circle:
             # Create circular polygon

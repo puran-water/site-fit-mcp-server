@@ -4,16 +4,16 @@ Generates ROM (Rough Order of Magnitude) quantities for civil engineering
 handoff and cost estimation.
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
 import csv
 import io
 import math
+from dataclasses import dataclass, field
+from typing import Any
 
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
-from ..models.solution import SiteFitSolution, RoadNetwork, Placement
+from ..models.solution import Placement, RoadNetwork, SiteFitSolution
 
 
 @dataclass
@@ -21,7 +21,7 @@ class QuantityTakeoff:
     """ROM quantity takeoff data from a site layout solution."""
 
     # Pad/structure areas by type
-    pad_area_by_type: Dict[str, float] = field(default_factory=dict)
+    pad_area_by_type: dict[str, float] = field(default_factory=dict)
     total_pad_area_m2: float = 0.0
 
     # Road quantities
@@ -31,7 +31,7 @@ class QuantityTakeoff:
     max_dead_end_length_m: float = 0.0
 
     # Pipe proxies (from topology)
-    pipe_length_by_type: Dict[str, float] = field(default_factory=dict)
+    pipe_length_by_type: dict[str, float] = field(default_factory=dict)
     total_pipe_proxy_length_m: float = 0.0
 
     # Site boundary
@@ -43,7 +43,7 @@ class QuantityTakeoff:
     min_throat_width_m: float = float("inf")
     structure_count: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "pad_area_by_type": self.pad_area_by_type,
@@ -110,9 +110,9 @@ class QuantityTakeoff:
 
 def compute_quantities(
     solution: SiteFitSolution,
-    boundary: Optional[Polygon] = None,
-    structure_types: Optional[Dict[str, str]] = None,
-    topology_edges: Optional[List[Tuple[str, str, Dict[str, Any]]]] = None,
+    boundary: Polygon | None = None,
+    structure_types: dict[str, str] | None = None,
+    topology_edges: list[tuple[str, str, dict[str, Any]]] | None = None,
     buildable_area_m2: float = 0.0,
 ) -> QuantityTakeoff:
     """Compute quantity takeoff from a site layout solution.
@@ -160,11 +160,11 @@ def compute_quantities(
 
 def _compute_pad_areas(
     takeoff: QuantityTakeoff,
-    placements: List[Placement],
-    structure_types: Dict[str, str],
+    placements: list[Placement],
+    structure_types: dict[str, str],
 ) -> QuantityTakeoff:
     """Compute pad/structure areas by equipment type."""
-    area_by_type: Dict[str, float] = {}
+    area_by_type: dict[str, float] = {}
     total_area = 0.0
 
     for p in placements:
@@ -192,7 +192,7 @@ def _compute_road_quantities(
 
     # Compute road area by buffering centerlines
     road_polygons = []
-    endpoint_counts: Dict[Tuple[float, float], int] = {}
+    endpoint_counts: dict[tuple[float, float], int] = {}
 
     for seg in road_network.segments:
         coords = seg.to_linestring_coords()
@@ -231,8 +231,8 @@ def _compute_road_quantities(
 
 def _compute_pipe_proxies(
     takeoff: QuantityTakeoff,
-    placements: List[Placement],
-    topology_edges: List[Tuple[str, str, Dict[str, Any]]],
+    placements: list[Placement],
+    topology_edges: list[tuple[str, str, dict[str, Any]]],
 ) -> QuantityTakeoff:
     """Compute pipe proxy lengths from topology.
 
@@ -241,7 +241,7 @@ def _compute_pipe_proxies(
     # Build placement lookup
     placement_map = {p.structure_id: p for p in placements}
 
-    pipe_by_type: Dict[str, float] = {}
+    pipe_by_type: dict[str, float] = {}
     total_pipe = 0.0
 
     for from_id, to_id, metadata in topology_edges:
@@ -276,7 +276,7 @@ def _compute_pipe_proxies(
 
 def _compute_min_throat_width(
     takeoff: QuantityTakeoff,
-    placements: List[Placement],
+    placements: list[Placement],
 ) -> QuantityTakeoff:
     """Compute minimum throat width between adjacent structures.
 

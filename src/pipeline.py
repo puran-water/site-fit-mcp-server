@@ -13,30 +13,34 @@ Orchestrates the full pipeline from request to solutions:
 import logging
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from shapely.geometry import Polygon
 
-from .models.site import SiteBoundary, Entrance, Keepout
-from .models.structures import (
-    StructureFootprint, PlacedStructure, RectFootprint, CircleFootprint,
-    FixedPosition, ServiceEnvelopes,
-)
-from .models.rules import RuleSet
-from .rules.loader import load_ruleset
-from .models.solution import SiteFitSolution, SolutionMetrics, Placement
-from .models.topology import TopologyGraph
+from .geometry.clearance import check_boundary_clearance, check_clearance_violations
+from .geometry.containment import check_containment
 from .geometry.polygon_ops import compute_buildable_area, polygon_from_coords
-from .geometry.clearance import check_clearance_violations, check_boundary_clearance
-from .geometry.containment import check_containment, ContainmentStatus
-from .models.structures import AccessRequirement
-from .topology.sfiles_parser import parse_sfiles_topology
-from .topology.placement_hints import compute_placement_hints, PlacementHints
-from .solver.cpsat_placer import PlacementSolver, PlacementSolverConfig
-from .solver.diversity import SolutionFingerprint, filter_diverse_solutions
-from .solver.solution_pool import SolutionPool, SolutionEntry
+from .models.rules import RuleSet
+from .models.site import Entrance, Keepout
+from .models.solution import Placement, SiteFitSolution, SolutionMetrics
+from .models.structures import (
+    AccessRequirement,
+    CircleFootprint,
+    FixedPosition,
+    PlacedStructure,
+    RectFootprint,
+    ServiceEnvelopes,
+    StructureFootprint,
+)
 from .roads.network import build_road_network_for_solution
-from .tools.sitefit_tools import SiteFitRequest, SiteFitResponse, SolutionSummary
+from .rules.loader import load_ruleset
+from .solver.cpsat_placer import PlacementSolver, PlacementSolverConfig
+from .solver.diversity import SolutionFingerprint
+from .solver.solution_pool import SolutionEntry, SolutionPool
+from .tools.sitefit_tools import SiteFitRequest
+from .topology.placement_hints import PlacementHints, compute_placement_hints
+from .topology.sfiles_parser import parse_sfiles_topology
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +51,8 @@ ProgressCallback = Callable[[str, float], None]
 
 async def generate_site_fits(
     request: SiteFitRequest,
-    progress_callback: Optional[ProgressCallback] = None,
-) -> Tuple[List[SiteFitSolution], Dict[str, Any]]:
+    progress_callback: ProgressCallback | None = None,
+) -> tuple[list[SiteFitSolution], dict[str, Any]]:
     """Main pipeline: generate site fit solutions from request.
 
     Args:
@@ -59,7 +63,7 @@ async def generate_site_fits(
         Tuple of (solutions, statistics)
     """
     job_id = str(uuid.uuid4())[:8]
-    stats: Dict[str, Any] = {"job_id": job_id}
+    stats: dict[str, Any] = {"job_id": job_id}
     start_time = time.time()
 
     def report_progress(message: str, percent: float):
@@ -463,11 +467,11 @@ async def generate_site_fits(
 
 
 def _compute_metrics(
-    placements: List[PlacedStructure],
+    placements: list[PlacedStructure],
     road_network,
     hints: PlacementHints,
     buildable_area: float = 0.0,
-    edge_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
+    edge_metadata: dict[str, dict[str, Any]] | None = None,
 ) -> SolutionMetrics:
     """Compute solution metrics including ROM quantities.
 
@@ -482,9 +486,10 @@ def _compute_metrics(
     Returns:
         SolutionMetrics with computed values including ROM metrics
     """
-    from .topology.placement_hints import compute_flow_violation_score
-    from shapely.ops import unary_union
     from shapely.geometry import LineString
+    from shapely.ops import unary_union
+
+    from .topology.placement_hints import compute_flow_violation_score
 
     edge_metadata = edge_metadata or {}
 
@@ -507,7 +512,7 @@ def _compute_metrics(
 
     # Pipe length weighted and by type
     pipe_length_weighted = 0.0
-    pipe_length_by_type: Dict[str, float] = {}
+    pipe_length_by_type: dict[str, float] = {}
 
     for upstream, downstream in hints.flow_precedence:
         if upstream in positions and downstream in positions:
@@ -542,7 +547,7 @@ def _compute_metrics(
 
         # Compute road area and intersection metrics
         road_polys = []
-        endpoint_counts: Dict[Tuple[float, float], int] = {}
+        endpoint_counts: dict[tuple[float, float], int] = {}
 
         for seg in road_network.segments:
             coords = seg.to_linestring_coords()
@@ -606,7 +611,7 @@ def _classify_pipe_type(pipe_type_str: str) -> str:
         return "pressure"
 
 
-def _compute_min_throat_width(placements: List[PlacedStructure]) -> float:
+def _compute_min_throat_width(placements: list[PlacedStructure]) -> float:
     """Compute minimum throat width between adjacent structures."""
     min_width = float("inf")
 
@@ -634,9 +639,9 @@ def _compute_min_throat_width(placements: List[PlacedStructure]) -> float:
 
 def _generate_diversity_note(
     entry: SolutionEntry,
-    all_entries: List[SolutionEntry],
+    all_entries: list[SolutionEntry],
     rank: int,
-) -> Optional[str]:
+) -> str | None:
     """Generate note explaining why this solution is different."""
     if rank == 0:
         return "Best overall solution by objective"
@@ -662,11 +667,11 @@ def _generate_diversity_note(
 def _generate_geojson(
     solution: SiteFitSolution,
     boundary: Polygon,
-    entrances: List[Entrance],
-    rules: Optional[RuleSet] = None,
-    structure_types: Optional[Dict[str, str]] = None,
-    keepouts: Optional[List[Keepout]] = None,
-) -> Dict[str, Any]:
+    entrances: list[Entrance],
+    rules: RuleSet | None = None,
+    structure_types: dict[str, str] | None = None,
+    keepouts: list[Keepout] | None = None,
+) -> dict[str, Any]:
     """Generate full GeoJSON for solution visualization.
 
     Args:

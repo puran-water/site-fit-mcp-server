@@ -7,19 +7,16 @@ Generates a complete deliverable package with multiple export formats:
 - GeoJSON
 """
 
+import json
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-from datetime import datetime
-import json
-import os
-import tempfile
+from typing import Any
 
 from shapely.geometry import Polygon
 
 from ..models.solution import SiteFitSolution
-from .quantities import compute_quantities, QuantityTakeoff
-from .geojson import solution_to_geojson
+from .quantities import QuantityTakeoff, compute_quantities
 
 
 @dataclass
@@ -27,27 +24,27 @@ class ExportPackResult:
     """Result of export pack generation."""
 
     success: bool = True
-    formats_generated: List[str] = field(default_factory=list)
-    files: Dict[str, str] = field(default_factory=dict)  # format -> file path
-    errors: Dict[str, str] = field(default_factory=dict)  # format -> error message
-    quantities: Optional[Dict[str, Any]] = None
+    formats_generated: list[str] = field(default_factory=list)
+    files: dict[str, str] = field(default_factory=dict)  # format -> file path
+    errors: dict[str, str] = field(default_factory=dict)  # format -> error message
+    quantities: dict[str, Any] | None = None
 
 
 def export_pack(
     solution: SiteFitSolution,
     boundary: Polygon,
-    formats: List[str],
-    output_dir: Optional[str] = None,
-    structure_types: Optional[Dict[str, str]] = None,
-    topology_edges: Optional[List[Tuple[str, str, Dict[str, Any]]]] = None,
+    formats: list[str],
+    output_dir: str | None = None,
+    structure_types: dict[str, str] | None = None,
+    topology_edges: list[tuple[str, str, dict[str, Any]]] | None = None,
     buildable_area_m2: float = 0.0,
-    buildable_polygon: Optional[Polygon] = None,
-    keepouts: Optional[List[Dict[str, Any]]] = None,
-    entrances: Optional[List[Dict[str, Any]]] = None,
-    hazard_zones: Optional[List[Any]] = None,
+    buildable_polygon: Polygon | None = None,
+    keepouts: list[dict[str, Any]] | None = None,
+    entrances: list[dict[str, Any]] | None = None,
+    hazard_zones: list[Any] | None = None,
     project_name: str = "",
     drawing_number: str = "",
-    tight_constraints: Optional[List[str]] = None,
+    tight_constraints: list[str] | None = None,
 ) -> ExportPackResult:
     """Generate export pack with multiple formats.
 
@@ -157,9 +154,9 @@ def _export_geojson(
     solution: SiteFitSolution,
     output_path: Path,
     boundary: Polygon,
-    keepouts: Optional[List[Dict[str, Any]]],
-    entrances: Optional[List[Dict[str, Any]]],
-    hazard_zones: Optional[List[Any]],
+    keepouts: list[dict[str, Any]] | None,
+    entrances: list[dict[str, Any]] | None,
+    hazard_zones: list[Any] | None,
 ) -> Path:
     """Export solution as GeoJSON."""
     file_path = output_path / f"{solution.id}_layout.geojson"
@@ -199,12 +196,12 @@ def _export_dxf(
     solution: SiteFitSolution,
     output_path: Path,
     boundary: Polygon,
-    buildable_polygon: Optional[Polygon],
-    keepouts: Optional[List[Dict[str, Any]]],
-    entrances: Optional[List[Dict[str, Any]]],
-    hazard_zones: Optional[List[Any]],
-    structure_types: Dict[str, str],
-) -> Optional[Path]:
+    buildable_polygon: Polygon | None,
+    keepouts: list[dict[str, Any]] | None,
+    entrances: list[dict[str, Any]] | None,
+    hazard_zones: list[Any] | None,
+    structure_types: dict[str, str],
+) -> Path | None:
     """Export solution as DXF with engineering layers."""
     try:
         from .dxf import save_solution_to_dxf
@@ -234,11 +231,11 @@ def _export_pdf(
     takeoff: QuantityTakeoff,
     project_name: str,
     drawing_number: str,
-    tight_constraints: List[str],
-) -> Optional[Path]:
+    tight_constraints: list[str],
+) -> Path | None:
     """Export solution as PDF plan sheet."""
     try:
-        from .pdf_report import generate_pdf_report, PDFReportConfig
+        from .pdf_report import PDFReportConfig, generate_pdf_report
     except ImportError:
         return None
 
