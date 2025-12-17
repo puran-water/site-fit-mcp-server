@@ -14,6 +14,12 @@ from .diversity import (
     filter_diverse_solutions,
     compute_solution_distance,
 )
+from .grid_candidates import (
+    CandidateGrid,
+    compute_valid_candidates,
+    compute_candidates_for_structures,
+    candidates_to_element_tables,
+)
 
 __all__ = [
     # Main solver
@@ -27,4 +33,9 @@ __all__ = [
     "SolutionFingerprint",
     "filter_diverse_solutions",
     "compute_solution_distance",
+    # Grid candidates
+    "CandidateGrid",
+    "compute_valid_candidates",
+    "compute_candidates_for_structures",
+    "candidates_to_element_tables",
 ]

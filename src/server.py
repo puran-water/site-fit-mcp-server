@@ -60,6 +60,7 @@ async def sitefit_generate(
     structures: List[Dict[str, Any]],
     entrances: Optional[List[Dict[str, Any]]] = None,
     keepouts: Optional[List[Dict[str, Any]]] = None,
+    existing: Optional[List[Dict[str, Any]]] = None,
     sfiles2: Optional[str] = None,
     rules_override: Optional[Dict[str, Any]] = None,
     max_solutions: int = 5,
@@ -76,6 +77,8 @@ async def sitefit_generate(
         structures: List of structures with id, type, footprint {shape, w, h or d}
         entrances: Site entrances with {id, point: [x,y], width}
         keepouts: Keep-out zones with {id, geometry: GeoJSON, reason}
+        existing: Existing structures for brownfield sites with {id, footprint: GeoJSON,
+                  clearance_required, is_tie_in_point}
         sfiles2: Optional SFILES2 string for process topology constraints
         rules_override: Optional rule overrides for setbacks/clearances
         max_solutions: Maximum solutions to return (1-50, default 5)
@@ -91,7 +94,7 @@ async def sitefit_generate(
             "boundary": site_boundary,
             "entrances": entrances or [],
             "keepouts": keepouts or [],
-            "existing": [],
+            "existing": existing or [],
         },
         topology={"sfiles2": sfiles2} if sfiles2 else None,
         program={"structures": structures},
@@ -505,6 +508,126 @@ async def sitefit_export(
             "isError": True,
             "error": f"Unknown format '{format}'",
             "suggestion": "Valid formats are: 'geojson', 'svg', 'summary'",
+        }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": False,  # Creates files on disk
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_export_pack(
+    solution_id: str,
+    formats: List[str] = ["geojson", "csv"],
+    output_dir: Optional[str] = None,
+    project_name: str = "",
+    drawing_number: str = "",
+) -> Dict[str, Any]:
+    """Export solution as a complete deliverable package with multiple formats.
+
+    Generates bundled exports for proposal exhibits and civil handoff:
+    - PDF plan sheet with layout diagram, scale bar, legend, and quantities
+    - DXF CAD file with layers: BOUNDARY, BUILDLIMIT, KEEPOUTS, STRUCTURES, ROADS
+    - CSV with ROM quantities: pad areas, road length, pipe proxies, fence perimeter
+    - GeoJSON for visualization and GIS integration
+
+    Args:
+        solution_id: Solution ID from sitefit_generate
+        formats: List of formats to generate - 'pdf', 'dxf', 'csv', 'geojson' (default: csv, geojson)
+        output_dir: Directory for output files (uses temp directory if not specified)
+        project_name: Project name for PDF title block
+        drawing_number: Drawing number for PDF title block
+
+    Returns:
+        Dict with success, files (format -> path mapping), quantities, and any errors
+    """
+    if solution_id not in _solutions:
+        return {
+            "isError": True,
+            "error": f"Solution {solution_id} not found",
+            "suggestion": "Use sitefit_list_solutions to get valid solution IDs",
+        }
+
+    try:
+        from .export.pack import export_pack
+        from .models.solution import SiteFitSolution
+        from shapely.geometry import Polygon
+
+        # Reconstruct solution object
+        solution_data = _solutions[solution_id]
+        sol = SiteFitSolution(**solution_data)
+
+        # Get boundary from GeoJSON
+        boundary_feature = next(
+            (f for f in solution_data.get("features_geojson", {}).get("features", [])
+             if f.get("properties", {}).get("kind") == "boundary"),
+            None
+        )
+
+        if boundary_feature:
+            boundary = Polygon(boundary_feature["geometry"]["coordinates"][0])
+        else:
+            # Fallback: compute bounding box from placements
+            placements = solution_data.get("placements", [])
+            if placements:
+                xs = [p["x"] for p in placements]
+                ys = [p["y"] for p in placements]
+                margin = 20
+                boundary = Polygon([
+                    [min(xs) - margin, min(ys) - margin],
+                    [max(xs) + margin, min(ys) - margin],
+                    [max(xs) + margin, max(ys) + margin],
+                    [min(xs) - margin, max(ys) + margin],
+                    [min(xs) - margin, min(ys) - margin],
+                ])
+            else:
+                boundary = Polygon([[0, 0], [200, 0], [200, 150], [0, 150], [0, 0]])
+
+        # Extract structure types from features
+        structure_types = {}
+        for feature in solution_data.get("features_geojson", {}).get("features", []):
+            props = feature.get("properties", {})
+            if props.get("kind") == "structure":
+                struct_id = props.get("id")
+                struct_type = props.get("type", "unknown")
+                if struct_id:
+                    structure_types[struct_id] = struct_type
+
+        # Run export pack
+        result = export_pack(
+            solution=sol,
+            boundary=boundary,
+            formats=formats,
+            output_dir=output_dir,
+            structure_types=structure_types,
+            project_name=project_name or f"Site Layout {solution_id}",
+            drawing_number=drawing_number or solution_id[:8].upper(),
+        )
+
+        return {
+            "success": result.success,
+            "solution_id": solution_id,
+            "formats_generated": result.formats_generated,
+            "files": result.files,
+            "quantities": result.quantities,
+            "errors": result.errors if result.errors else None,
+        }
+
+    except ImportError as e:
+        return {
+            "isError": True,
+            "error": f"Export module not available: {e}",
+            "suggestion": "Some formats require optional dependencies. Install with: pip install 'site-fit-mcp[export]'",
+        }
+    except Exception as e:
+        logger.exception("Export pack failed")
+        return {
+            "isError": True,
+            "error": f"Export failed: {str(e)}",
+            "suggestion": "Check that the solution has valid geometry data",
         }
 
 

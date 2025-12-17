@@ -66,6 +66,7 @@ Then open http://localhost:8765 in your browser.
 | `sitefit_list_solutions` | List solutions for a job with pagination |
 | `sitefit_job_status` | Get status and progress of a generation job |
 | `sitefit_export` | Export solution to GeoJSON, SVG, or summary format |
+| `sitefit_export_pack` | Export bundle with DXF, GeoJSON, CSV quantities, and optional PDF |
 | `sitefit_generate_from_request` | Generate from nested SiteFitRequest object |
 | `sitefit_load_gis_file` | Load site boundary/keepouts/entrances from GIS files |
 | `sitefit_list_gis_layers` | List layers in a GIS file with metadata |
@@ -133,7 +134,48 @@ Structures can specify vehicle access requirements:
     "vehicle": "tanker",
     "dock_edge": "any",
     "dock_length": 15.0,
+    "turning_radius": 15.0,
     "required": true
+  }
+}
+```
+
+The `turning_radius` field specifies the minimum turning radius for dock approaches to this structure. The solver validates road segments connecting to the structure against this requirement.
+
+### Pinned Placements
+
+Structures can be pinned to fixed positions for brownfield sites or iterative design:
+```json
+{
+  "id": "TK-001",
+  "type": "tank",
+  "footprint": {"shape": "circle", "d": 12},
+  "pinned": true,
+  "fixed_position": {
+    "x": 50.0,
+    "y": 50.0,
+    "rotation_deg": 0
+  }
+}
+```
+
+Pinned structures are placed at exact coordinates. The solver validates them against other constraints (NoOverlap2D) but does not move them.
+
+### Service Envelopes
+
+Structures can specify maintenance and crane access requirements:
+```json
+{
+  "id": "RX-001",
+  "type": "reactor",
+  "footprint": {"shape": "rect", "w": 8, "h": 6},
+  "service_envelopes": {
+    "maintenance_offset": 3.0,
+    "crane_access_edge": "long",
+    "crane_strip_width": 6.0,
+    "crane_strip_length": 20.0,
+    "laydown_area": [10.0, 8.0],
+    "laydown_edge": "E"
   }
 }
 ```
@@ -222,7 +264,8 @@ src/
 ├── solver/                # OR-Tools CP-SAT solver
 │   ├── cpsat_placer.py   # Placement solver with NoOverlap2D
 │   ├── solution_pool.py  # Multi-solution enumeration
-│   └── diversity.py      # Solution fingerprinting & filtering
+│   ├── diversity.py      # Solution fingerprinting & filtering
+│   └── grid_candidates.py # Grid-based candidate generation
 ├── topology/              # SFILES2 parsing
 │   ├── sfiles_parser.py  # SFILES2 graph parsing with branch handling
 │   ├── graph_analysis.py # SCC, topological order, clustering
@@ -230,7 +273,8 @@ src/
 ├── roads/                 # Road network generation
 │   ├── dock_zones.py     # Access dock generation
 │   ├── pathfinder.py     # A* road routing
-│   └── network.py        # Road network validation (Steiner tree optimized)
+│   ├── network.py        # Road network validation (Steiner tree optimized)
+│   └── turning_radius.py # Turning radius validation at corners
 ├── hazards/               # Safety zone calculations
 │   └── nfpa820_zones.py  # NFPA 820 hazardous area classification
 ├── loaders/               # File format loaders
@@ -241,7 +285,11 @@ src/
 │   └── default.yaml      # Default engineering rules
 ├── export/                # Export utilities
 │   ├── geojson.py        # GeoJSON FeatureCollection export
-│   └── svg.py            # SVG preview generation
+│   ├── svg.py            # SVG preview generation
+│   ├── dxf.py            # DXF CAD export with layers
+│   ├── quantities.py     # CSV quantity takeoffs
+│   ├── pdf_report.py     # PDF plan sheet generation
+│   └── pack.py           # Bundle export orchestrator
 └── tools/                 # MCP tool definitions
     └── sitefit_tools.py
 ```
@@ -350,6 +398,15 @@ Layer auto-detection uses naming conventions:
 - **Entrances**: "entrance", "access", "gate", "driveway"
 
 ## Recent Updates
+
+### v0.3.0 (2025-12-17)
+- **Export Pack Tool**: New `sitefit_export_pack` for bundled DXF/GeoJSON/CSV/PDF exports
+- **Pinned Placements**: Support `pinned: true` with `fixed_position` for brownfield sites
+- **Service Envelopes**: Maintenance, crane access, and laydown area requirements
+- **Per-Structure Turning Radius**: `access.turning_radius` enforced per dock approach
+- **Footprint-Based Hazard Zones**: NFPA 820 zones now calculated from equipment perimeter, not centroid
+- **Enhanced ROM Metrics**: Categorical breakdowns in `SolutionMetrics`
+- **Existing Structures**: Parse `site.existing` as obstacles for road routing and placement
 
 ### v0.2.0 (2025-12-14)
 - **YAML Rulesets**: Pipeline now loads rules from `src/rulesets/default.yaml` instead of hardcoded defaults

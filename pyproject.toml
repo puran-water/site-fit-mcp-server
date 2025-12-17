@@ -42,6 +42,13 @@ gis = [
     "fiona>=1.9.0",
     "pyproj>=3.6.0",
 ]
+pdf = [
+    "weasyprint>=62.0",
+]
+export = [
+    "ezdxf>=1.0.0",
+    "weasyprint>=62.0",
+]
 
 [project.scripts]
 site-fit-mcp = "src.server:main"

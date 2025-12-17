@@ -15,6 +15,12 @@ from .network import (
     validate_road_network,
     RoadValidationResult,
 )
+from .turning_radius import (
+    validate_turning_radius,
+    TurningRadiusResult,
+    TurningRadiusIssue,
+    compute_required_leg_length,
+)
 
 __all__ = [
     # Dock zones
@@ -29,4 +35,9 @@ __all__ = [
     "RoadNetworkBuilder",
     "validate_road_network",
     "RoadValidationResult",
+    # Turning radius
+    "validate_turning_radius",
+    "TurningRadiusResult",
+    "TurningRadiusIssue",
+    "compute_required_leg_length",
 ]

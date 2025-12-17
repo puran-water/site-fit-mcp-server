@@ -74,6 +74,24 @@ class SolutionMetrics(BaseModel):
         default=0.0, ge=0, le=1, description="Convex hull efficiency (occupied/hull area)"
     )
 
+    # ROM metrics (new)
+    pipe_length_by_type: Dict[str, float] = Field(
+        default_factory=dict,
+        description="Pipe length breakdown by type: {gravity, pressure, gas, sludge}"
+    )
+    road_area_m2: float = Field(
+        default=0.0, ge=0, description="Total road surface area in square meters"
+    )
+    max_dead_end_length: float = Field(
+        default=0.0, ge=0, description="Longest dead-end road segment in meters"
+    )
+    intersection_count: int = Field(
+        default=0, ge=0, description="Number of road intersections (3+ way)"
+    )
+    min_throat_width: Optional[float] = Field(
+        default=None, ge=0, description="Narrowest passage between structures in meters"
+    )
+
     # Constraint satisfaction
     min_clearance_achieved: float = Field(
         default=0.0, ge=0, description="Minimum achieved clearance between structures"
@@ -83,6 +101,14 @@ class SolutionMetrics(BaseModel):
     )
     access_violations: int = Field(
         default=0, ge=0, description="Number of structures without road access"
+    )
+
+    # Service envelope metrics (soft penalties)
+    envelope_overlap_count: int = Field(
+        default=0, ge=0, description="Number of service envelope overlaps"
+    )
+    envelope_overlap_area_m2: float = Field(
+        default=0.0, ge=0, description="Total overlapping envelope area in square meters"
     )
 
     # Topology adherence

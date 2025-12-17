@@ -435,25 +435,36 @@ def validate_road_network(
     structures: List[PlacedStructure],
     entrances: List[Entrance],
     require_all_accessible: bool = True,
+    min_turning_radius: float = 12.0,
+    validate_turning: bool = True,
+    structure_turning_radii: Optional[Dict[str, float]] = None,
 ) -> RoadValidationResult:
     """Validate a road network.
 
     Checks:
     1. All structures with access requirements are reachable
     2. Roads don't overlap structures
-    3. Turning radius requirements are met (simplified check)
+    3. Turning radius requirements are met at all corners
+    4. Per-structure turning radius requirements are met for dock approaches
 
     Args:
         network: Road network to validate
         structures: Placed structures
         entrances: Site entrances
         require_all_accessible: Require all structures with access to be reachable
+        min_turning_radius: Minimum required turning radius (meters)
+        validate_turning: If True, validate turning radius at corners
+        structure_turning_radii: Optional per-structure turning radius requirements
+            {structure_id: min_radius} for structures with specific access needs
 
     Returns:
         RoadValidationResult with validation details
     """
+    from .turning_radius import validate_turning_radius
+
     issues = []
     accessible = set(network.structures_accessible)
+    structure_turning_radii = structure_turning_radii or {}
 
     # Find structures that need access
     need_access = {
@@ -484,6 +495,43 @@ def validate_road_network(
                         f"Road segment {segment.id} overlaps structure {struct_id}"
                     )
 
+    # Validate turning radius at corners
+    turning_issues = []
+    if validate_turning:
+        for segment in network.segments:
+            path = segment.to_linestring_coords()
+
+            # Determine minimum turning radius for this segment
+            # Check if any connected structure has a specific requirement
+            segment_min_radius = min_turning_radius
+            violated_by_structure: Optional[str] = None
+
+            for connected_id in segment.connects_to:
+                if connected_id in structure_turning_radii:
+                    struct_radius = structure_turning_radii[connected_id]
+                    # Use the stricter (larger) of global or structure-specific requirement
+                    if struct_radius > segment_min_radius:
+                        segment_min_radius = struct_radius
+                        violated_by_structure = connected_id
+
+            result = validate_turning_radius(path, segment_min_radius)
+            if not result.is_valid:
+                for issue in result.issues:
+                    # Include which structure's requirement was violated if applicable
+                    if violated_by_structure is not None:
+                        turning_issues.append(
+                            f"Segment {segment.id}: {issue.message} "
+                            f"(required turning radius {segment_min_radius:.1f}m "
+                            f"for structure {violated_by_structure})"
+                        )
+                    else:
+                        turning_issues.append(
+                            f"Segment {segment.id}: {issue.message}"
+                        )
+
+        if turning_issues:
+            issues.extend(turning_issues)
+
     # Calculate total length
     total_length = sum(s.length for s in network.segments)
 
@@ -491,6 +539,8 @@ def validate_road_network(
     all_accessible = len(inaccessible) == 0
     is_valid = all_accessible if require_all_accessible else True
     is_valid = is_valid and len([i for i in issues if "overlaps" in i]) == 0
+    # HARD REJECTION: Solutions with infeasible turning corners are rejected
+    is_valid = is_valid and len(turning_issues) == 0
 
     return RoadValidationResult(
         is_valid=is_valid,
@@ -618,6 +668,8 @@ def build_road_network_for_solution(
     rules: RuleSet,
     keepouts: Optional[List[Polygon]] = None,
     validate_containment: bool = True,
+    validate_turning: bool = True,
+    min_turning_radius: float = 12.0,
     grid_resolution: Optional[float] = None,
 ) -> Optional[RoadNetwork]:
     """Convenience function to build road network for a solution.
@@ -629,6 +681,8 @@ def build_road_network_for_solution(
         rules: Engineering rules
         keepouts: Optional keepout zones to validate against
         validate_containment: If True, validate road polygons stay inside boundary
+        validate_turning: If True, validate turning radius at corners
+        min_turning_radius: Minimum required turning radius (meters)
         grid_resolution: Pathfinding grid resolution in meters (default: adaptive)
             - 0.5: Finer grid, better for complex/irregular sites
             - 1.0: Default, good balance of accuracy and speed
@@ -665,5 +719,33 @@ def build_road_network_for_solution(
             for issue in issues:
                 logger.warning(f"Road validation failed: {issue}")
             return None
+
+    # Validate turning radius if requested
+    if validate_turning:
+        # Extract per-structure turning radii from access requirements
+        structure_turning_radii: Dict[str, float] = {}
+        for p in placements:
+            if p.structure.access and p.structure.access.turning_radius:
+                structure_turning_radii[p.structure_id] = p.structure.access.turning_radius
+
+        result = validate_road_network(
+            network=network,
+            structures=placements,
+            entrances=entrances,
+            require_all_accessible=False,  # Already built, just checking turning
+            min_turning_radius=min_turning_radius,
+            validate_turning=True,
+            structure_turning_radii=structure_turning_radii,
+        )
+
+        if not result.is_valid:
+            for issue in result.issues:
+                # Only log turning-related issues (not accessibility)
+                if "turning" in issue.lower() or "radius" in issue.lower():
+                    logger.warning(f"Road validation failed: {issue}")
+            # Check if any turning issues exist (hard rejection)
+            turning_issues = [i for i in result.issues if "turning" in i.lower() or "radius" in i.lower()]
+            if turning_issues:
+                return None
 
     return network
