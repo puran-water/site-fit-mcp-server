@@ -18,7 +18,10 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from shapely.geometry import Polygon
 
 from .models.site import SiteBoundary, Entrance, Keepout
-from .models.structures import StructureFootprint, PlacedStructure, RectFootprint, CircleFootprint
+from .models.structures import (
+    StructureFootprint, PlacedStructure, RectFootprint, CircleFootprint,
+    FixedPosition, ServiceEnvelopes,
+)
 from .models.rules import RuleSet
 from .rules.loader import load_ruleset
 from .models.solution import SiteFitSolution, SolutionMetrics, Placement
@@ -94,6 +97,28 @@ async def generate_site_fits(
                 reason=ko_data.get("reason", "unspecified"),
             ))
 
+    # Parse existing structures (brownfield)
+    existing_polys = []
+    existing_buffers = []
+    tie_in_points = []  # Existing structures that are utility tie-in points
+    for ex_data in request.site.existing:
+        # Handle both "footprint" (GeoJSON) and "geometry" (legacy) keys
+        footprint_data = ex_data.get("footprint") or ex_data.get("geometry", {})
+        ex_coords = footprint_data.get("coordinates", [[]])[0]
+        if ex_coords:
+            poly = polygon_from_coords([tuple(c) for c in ex_coords])
+            existing_polys.append(poly)
+            # Use clearance_required or default to 3.0m
+            clearance = ex_data.get("clearance_required", 3.0)
+            existing_buffers.append(clearance)
+            # Track tie-in points for road routing
+            if ex_data.get("is_tie_in_point", False):
+                tie_in_points.append({
+                    "id": ex_data.get("id", f"tiein_{len(tie_in_points)}"),
+                    "point": (poly.centroid.x, poly.centroid.y),
+                    "polygon": poly,
+                })
+
     # Parse structures
     structures = []
     for s_data in request.program.structures:
@@ -121,6 +146,29 @@ async def generate_site_fits(
                 turning_radius=access_data.get("turning_radius"),
             )
 
+        # Parse pinned placement if provided (Tier 2)
+        fixed_pos = None
+        fixed_pos_data = s_data.get("fixed_position")
+        if fixed_pos_data:
+            fixed_pos = FixedPosition(
+                x=fixed_pos_data.get("x", 0.0),
+                y=fixed_pos_data.get("y", 0.0),
+                rotation_deg=fixed_pos_data.get("rotation_deg", 0),
+            )
+
+        # Parse service envelopes if provided (Tier 2)
+        svc_envelopes = None
+        svc_data = s_data.get("service_envelopes")
+        if svc_data:
+            svc_envelopes = ServiceEnvelopes(
+                maintenance_offset=svc_data.get("maintenance_offset", 0.0),
+                crane_access_edge=svc_data.get("crane_access_edge"),
+                crane_strip_width=svc_data.get("crane_strip_width", 6.0),
+                crane_strip_length=svc_data.get("crane_strip_length", 20.0),
+                laydown_area=tuple(svc_data["laydown_area"]) if svc_data.get("laydown_area") else None,
+                laydown_edge=svc_data.get("laydown_edge"),
+            )
+
         structures.append(StructureFootprint(
             id=s_data.get("id", f"structure_{len(structures)}"),
             type=s_data.get("type", "unknown"),
@@ -130,11 +178,20 @@ async def generate_site_fits(
             equipment_tag=s_data.get("equipment_tag"),
             area_number=s_data.get("area_number"),
             access=access_req,
+            pinned=s_data.get("pinned", False),
+            fixed_position=fixed_pos,
+            allowed_zone=s_data.get("allowed_zone"),
+            service_envelopes=svc_envelopes,
         ))
 
     stats["num_structures"] = len(structures)
     stats["num_keepouts"] = len(keepouts)
     stats["num_entrances"] = len(entrances)
+    stats["num_existing"] = len(existing_polys)
+    stats["num_tie_in_points"] = len(tie_in_points)
+    stats["is_brownfield"] = len(existing_polys) > 0
+    stats["num_pinned"] = sum(1 for s in structures if s.pinned)
+    stats["num_with_service_envelopes"] = sum(1 for s in structures if s.service_envelopes)
 
     # PHASE 2: Parse topology
     report_progress("Parsing topology...", 10)
@@ -173,6 +230,8 @@ async def generate_site_fits(
         boundary=site_boundary,
         setback=setback,
         keepouts=keepout_polys,
+        existing=existing_polys if existing_polys else None,
+        existing_buffers=existing_buffers if existing_buffers else None,
     )
 
     if buildable.is_empty:
@@ -361,7 +420,9 @@ async def generate_site_fits(
                 break
 
         # Compute metrics
-        metrics = _compute_metrics(entry.placements, road_network, hints)
+        metrics = _compute_metrics(
+            entry.placements, road_network, hints, buildable_area=buildable.area
+        )
 
         # Create solution
         solution = SiteFitSolution(
@@ -385,10 +446,10 @@ async def generate_site_fits(
             diversity_note=_generate_diversity_note(entry, diverse_entries, rank),
         )
 
-        # Generate GeoJSON (with hazard zones if configured)
+        # Generate GeoJSON (with hazard zones and keepouts for viewer)
         structure_types = {s.id: s.type for s in structures}
         solution.features_geojson = _generate_geojson(
-            solution, site_boundary, entrances, rules, structure_types
+            solution, site_boundary, entrances, rules, structure_types, keepouts
         )
 
         final_solutions.append(solution)
@@ -405,35 +466,170 @@ def _compute_metrics(
     placements: List[PlacedStructure],
     road_network,
     hints: PlacementHints,
+    buildable_area: float = 0.0,
+    edge_metadata: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> SolutionMetrics:
-    """Compute solution metrics."""
+    """Compute solution metrics including ROM quantities.
+
+    Args:
+        placements: List of placed structures
+        road_network: Road network (if computed)
+        hints: PlacementHints with topology info
+        buildable_area: Total buildable area in m² for site utilization
+        edge_metadata: Optional edge metadata for pipe type classification
+            keyed by 'from_id:to_id', e.g., {'EQ-001:TK-001': {'type': 'gravity'}}
+
+    Returns:
+        SolutionMetrics with computed values including ROM metrics
+    """
     from .topology.placement_hints import compute_flow_violation_score
+    from shapely.ops import unary_union
+    from shapely.geometry import LineString
+
+    edge_metadata = edge_metadata or {}
+
+    # Build position lookup
+    positions = {p.structure_id: (p.x, p.y) for p in placements}
 
     # Compactness (convex hull ratio)
-    from shapely.ops import unary_union
-
     if placements:
         all_polys = [p.to_shapely_polygon() for p in placements]
         combined = unary_union(all_polys)
         hull = combined.convex_hull
         compactness = combined.area / hull.area if hull.area > 0 else 0.0
+        total_footprint = combined.area
     else:
         compactness = 0.0
+        total_footprint = 0.0
 
-    # Road length
-    road_length = road_network.total_length if road_network else 0.0
+    # Site utilization (structure footprint / buildable area)
+    site_utilization = total_footprint / buildable_area if buildable_area > 0 else 0.0
+
+    # Pipe length weighted and by type
+    pipe_length_weighted = 0.0
+    pipe_length_by_type: Dict[str, float] = {}
+
+    for upstream, downstream in hints.flow_precedence:
+        if upstream in positions and downstream in positions:
+            x1, y1 = positions[upstream]
+            x2, y2 = positions[downstream]
+            # Manhattan distance (pipes typically run orthogonally)
+            dist = abs(x2 - x1) + abs(y2 - y1)
+            pipe_length_weighted += dist
+
+            # Classify pipe type from metadata
+            edge_key = f"{upstream}:{downstream}"
+            meta = edge_metadata.get(edge_key, {})
+            pipe_type = _classify_pipe_type(meta.get("type", "process"))
+            pipe_length_by_type[pipe_type] = pipe_length_by_type.get(pipe_type, 0.0) + dist
+
+    # Also consider adjacency weights
+    for (n1, n2), weight in hints.adjacency_weights.items():
+        if n1 in positions and n2 in positions:
+            x1, y1 = positions[n1]
+            x2, y2 = positions[n2]
+            dist = abs(x2 - x1) + abs(y2 - y1)
+            pipe_length_weighted += dist * weight
+
+    # Road metrics
+    road_length = 0.0
+    road_area_m2 = 0.0
+    max_dead_end_length = 0.0
+    intersection_count = 0
+
+    if road_network and road_network.segments:
+        road_length = road_network.total_length
+
+        # Compute road area and intersection metrics
+        road_polys = []
+        endpoint_counts: Dict[Tuple[float, float], int] = {}
+
+        for seg in road_network.segments:
+            coords = seg.to_linestring_coords()
+            if len(coords) >= 2:
+                line = LineString(coords)
+                buffered = line.buffer(seg.width / 2, cap_style=2)
+                road_polys.append(buffered)
+
+                # Count endpoints
+                start = (round(coords[0][0], 1), round(coords[0][1], 1))
+                end = (round(coords[-1][0], 1), round(coords[-1][1], 1))
+                endpoint_counts[start] = endpoint_counts.get(start, 0) + 1
+                endpoint_counts[end] = endpoint_counts.get(end, 0) + 1
+
+        if road_polys:
+            road_combined = unary_union(road_polys)
+            road_area_m2 = road_combined.area
+
+        # Count intersections (3+ connections)
+        intersection_count = sum(1 for c in endpoint_counts.values() if c >= 3)
+
+        # Find max dead end
+        for seg in road_network.segments:
+            coords = seg.to_linestring_coords()
+            if len(coords) >= 2:
+                start = (round(coords[0][0], 1), round(coords[0][1], 1))
+                end = (round(coords[-1][0], 1), round(coords[-1][1], 1))
+                if endpoint_counts.get(start, 0) == 1 or endpoint_counts.get(end, 0) == 1:
+                    max_dead_end_length = max(max_dead_end_length, seg.length)
+
+    # Compute min throat width between structures
+    min_throat_width = _compute_min_throat_width(placements)
 
     # Flow violation
-    positions = {p.structure_id: (p.x, p.y) for p in placements}
     topology_penalty = compute_flow_violation_score(hints, positions)
 
     return SolutionMetrics(
-        pipe_length_weighted=0.0,  # Would need actual pipe routing
+        pipe_length_weighted=pipe_length_weighted,
+        pipe_length_by_type=pipe_length_by_type,
         road_length=road_length,
-        site_utilization=0.0,  # Would need total buildable area
+        road_area_m2=road_area_m2,
+        max_dead_end_length=max_dead_end_length,
+        intersection_count=intersection_count,
+        min_throat_width=min_throat_width if min_throat_width < float("inf") else None,
+        site_utilization=site_utilization,
         compactness=compactness,
         topology_penalty=topology_penalty,
     )
+
+
+def _classify_pipe_type(pipe_type_str: str) -> str:
+    """Classify pipe type from metadata string."""
+    pipe_type_lower = pipe_type_str.lower()
+    if "gravity" in pipe_type_lower or "drain" in pipe_type_lower:
+        return "gravity"
+    elif "gas" in pipe_type_lower or "air" in pipe_type_lower or "biogas" in pipe_type_lower:
+        return "gas"
+    elif "sludge" in pipe_type_lower:
+        return "sludge"
+    else:
+        return "pressure"
+
+
+def _compute_min_throat_width(placements: List[PlacedStructure]) -> float:
+    """Compute minimum throat width between adjacent structures."""
+    min_width = float("inf")
+
+    for i, p1 in enumerate(placements):
+        for p2 in placements[i + 1:]:
+            b1 = p1.get_bounds()
+            b2 = p2.get_bounds()
+
+            # Check X gap when Y ranges overlap
+            y_overlap = not (b1[3] < b2[1] or b2[3] < b1[1])
+            if y_overlap:
+                x_gap = abs(b2[0] - b1[2]) if b2[0] > b1[2] else abs(b1[0] - b2[2])
+                if x_gap > 0:
+                    min_width = min(min_width, x_gap)
+
+            # Check Y gap when X ranges overlap
+            x_overlap = not (b1[2] < b2[0] or b2[2] < b1[0])
+            if x_overlap:
+                y_gap = abs(b2[1] - b1[3]) if b2[1] > b1[3] else abs(b1[1] - b2[3])
+                if y_gap > 0:
+                    min_width = min(min_width, y_gap)
+
+    return min_width
 
 
 def _generate_diversity_note(
@@ -469,6 +665,7 @@ def _generate_geojson(
     entrances: List[Entrance],
     rules: Optional[RuleSet] = None,
     structure_types: Optional[Dict[str, str]] = None,
+    keepouts: Optional[List[Keepout]] = None,
 ) -> Dict[str, Any]:
     """Generate full GeoJSON for solution visualization.
 
@@ -478,6 +675,7 @@ def _generate_geojson(
         entrances: List of entrances
         rules: Optional RuleSet for NFPA 820 zone computation
         structure_types: Optional mapping of structure_id to equipment type
+        keepouts: Optional list of keepout zones to include in output
     """
     features = []
 
@@ -486,15 +684,34 @@ def _generate_geojson(
     features.append({
         "type": "Feature",
         "geometry": {"type": "Polygon", "coordinates": [boundary_coords]},
-        "properties": {"kind": "boundary"},
+        "properties": {"kind": "boundary", "layer": "site"},
     })
+
+    # Keepouts (added for viewer visibility)
+    if keepouts:
+        for ko in keepouts:
+            coords = ko.geometry.get("coordinates", [[]])
+            if coords and coords[0]:
+                features.append({
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": coords,
+                    },
+                    "properties": {
+                        "kind": "keepout",
+                        "id": ko.id,
+                        "reason": ko.reason,
+                        "layer": "site",
+                    },
+                })
 
     # Entrances
     for ent in entrances:
         features.append({
             "type": "Feature",
             "geometry": {"type": "Point", "coordinates": list(ent.point)},
-            "properties": {"kind": "entrance", "id": ent.id},
+            "properties": {"kind": "entrance", "id": ent.id, "layer": "site"},
         })
 
     # NFPA 820 hazard zones (if rules provided and zones configured)

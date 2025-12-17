@@ -80,6 +80,56 @@ class AccessRequirement(BaseModel):
     )
 
 
+class FixedPosition(BaseModel):
+    """Fixed position for pinned structures."""
+
+    x: float = Field(..., description="X coordinate of structure center")
+    y: float = Field(..., description="Y coordinate of structure center")
+    rotation_deg: int = Field(default=0, description="Rotation in degrees")
+
+    @field_validator("rotation_deg")
+    @classmethod
+    def validate_rotation(cls, v: int) -> int:
+        """Validate rotation is a valid value."""
+        if v not in {0, 90, 180, 270}:
+            raise ValueError(f"Rotation must be 0, 90, 180, or 270, got {v}")
+        return v
+
+
+class ServiceEnvelopes(BaseModel):
+    """Service envelope requirements for maintenance and operation access.
+
+    Service envelopes define additional clearance zones around equipment
+    for maintenance access, crane access, and laydown areas.
+    Overlapping envelopes incur a soft penalty (not a hard constraint).
+    """
+
+    maintenance_offset: float = Field(
+        default=0.0, ge=0.0,
+        description="Additional clearance for maintenance access (all sides)"
+    )
+    crane_access_edge: Optional[Literal["N", "S", "E", "W", "long", "short"]] = Field(
+        default=None,
+        description="Edge requiring crane access strip"
+    )
+    crane_strip_width: float = Field(
+        default=6.0, ge=0.0,
+        description="Width of crane access strip in meters"
+    )
+    crane_strip_length: float = Field(
+        default=20.0, ge=0.0,
+        description="Length of crane access strip in meters"
+    )
+    laydown_area: Optional[Tuple[float, float]] = Field(
+        default=None,
+        description="Laydown area dimensions (width, length) adjacent to structure"
+    )
+    laydown_edge: Optional[Literal["N", "S", "E", "W", "long", "short"]] = Field(
+        default=None,
+        description="Edge where laydown area should be placed"
+    )
+
+
 class StructureFootprint(BaseModel):
     """Complete structure definition with footprint and constraints."""
 
@@ -103,6 +153,26 @@ class StructureFootprint(BaseModel):
     )
     area_number: Optional[int] = Field(
         default=None, description="Process area number from BFD hierarchy"
+    )
+
+    # Pinned placement support (Tier 2)
+    pinned: bool = Field(
+        default=False,
+        description="If true, structure must be placed at fixed_position"
+    )
+    fixed_position: Optional[FixedPosition] = Field(
+        default=None,
+        description="Fixed position for pinned structures"
+    )
+    allowed_zone: Optional[List[List[float]]] = Field(
+        default=None,
+        description="Constraint polygon limiting placement area [[x,y], ...]"
+    )
+
+    # Service envelope support (Tier 2)
+    service_envelopes: Optional[ServiceEnvelopes] = Field(
+        default=None,
+        description="Service envelope requirements for maintenance/crane access"
     )
 
     @field_validator("orientations_deg")

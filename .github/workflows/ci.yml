@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[dev]"
+
+      - name: Lint with ruff
+        run: |
+          ruff check src/
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short
+
+      - name: Test core imports without MCP
+        run: |
+          python -c "
+          from src.pipeline import generate_site_fits
+          from src.solver import PlacementSolver
+          from src import __version__, get_mcp
+          print(f'Core imports successful, version {__version__}')
+          "
+
+  test-with-dxf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies with DXF
+        run: |
+          uv pip install --system -e ".[dev,dxf]"
+
+      - name: Test DXF export imports
+        run: |
+          python -c "
+          from src.export.dxf import solution_to_dxf, save_solution_to_dxf
+          import ezdxf
+          print(f'DXF export available, ezdxf version {ezdxf.__version__}')
+          "
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v --tb=short

@@ -97,12 +97,15 @@ def compute_hazard_zones(
         if zone_config is None:
             continue
 
-        # Get equipment centroid
-        centroid = _get_placement_centroid(placement)
+        # Get equipment footprint (not just centroid) for accurate buffering
+        # This ensures the hazard zone extends from the equipment perimeter,
+        # not just the center point - critical for large rectangular equipment
+        footprint = _get_placement_footprint(placement)
 
         # Create Division 1 zone if radius > 0
         if zone_config.class_i_div_1_radius > 0:
-            div1_polygon = Point(centroid).buffer(zone_config.class_i_div_1_radius)
+            # Buffer the actual footprint, not just the centroid
+            div1_polygon = footprint.buffer(zone_config.class_i_div_1_radius)
             zones.append(HazardZone(
                 zone_type=HazardZoneType.CLASS_I_DIV_1,
                 source_equipment_id=placement.structure_id,
@@ -114,10 +117,11 @@ def compute_hazard_zones(
 
         # Create Division 2 zone if radius > 0
         if zone_config.class_i_div_2_radius > 0:
-            div2_polygon = Point(centroid).buffer(zone_config.class_i_div_2_radius)
+            # Buffer the footprint for Division 2
+            div2_polygon = footprint.buffer(zone_config.class_i_div_2_radius)
             # Division 2 is the annular ring outside Division 1
             if zone_config.class_i_div_1_radius > 0:
-                div1_inner = Point(centroid).buffer(zone_config.class_i_div_1_radius)
+                div1_inner = footprint.buffer(zone_config.class_i_div_1_radius)
                 div2_polygon = div2_polygon.difference(div1_inner)
             zones.append(HazardZone(
                 zone_type=HazardZoneType.CLASS_I_DIV_2,
@@ -137,6 +141,55 @@ def _get_placement_centroid(placement: Placement) -> Tuple[float, float]:
     Note: Placement.x and Placement.y are already center coordinates.
     """
     return (placement.x, placement.y)
+
+
+def _get_placement_footprint(placement: Placement) -> Polygon:
+    """Get the Shapely polygon footprint for a placement.
+
+    Creates accurate polygons:
+    - For circles: Circular buffer around center point (32-point approximation)
+    - For rectangles: Axis-aligned bounding box (rotation applied if needed)
+
+    Args:
+        placement: Placement object with x, y, width, height, shape
+
+    Returns:
+        Shapely Polygon representing the structure footprint
+    """
+    import math
+
+    if placement.is_circle:
+        # Circular structure - create circular polygon
+        radius = placement.width / 2
+        return Point(placement.x, placement.y).buffer(radius, resolution=32)
+    else:
+        # Rectangular structure - create polygon with rotation
+        half_w, half_h = placement.width / 2, placement.height / 2
+
+        # Base corners relative to center
+        corners = [
+            (-half_w, -half_h),
+            (half_w, -half_h),
+            (half_w, half_h),
+            (-half_w, half_h),
+        ]
+
+        # Apply rotation matrix for non-90° multiples
+        # (for 0, 90, 180, 270: width/height are already swapped)
+        if placement.rotation_deg % 90 != 0:
+            angle_rad = math.radians(placement.rotation_deg)
+            cos_a = math.cos(angle_rad)
+            sin_a = math.sin(angle_rad)
+            corners = [
+                (cx * cos_a - cy * sin_a, cx * sin_a + cy * cos_a)
+                for cx, cy in corners
+            ]
+
+        # Translate to placement center
+        coords = [(placement.x + cx, placement.y + cy) for cx, cy in corners]
+        coords.append(coords[0])  # Close the ring
+
+        return Polygon(coords)
 
 
 def get_combined_hazard_zones(

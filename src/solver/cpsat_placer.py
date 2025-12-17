@@ -73,9 +73,18 @@ class StructureVars:
     # Whether this is a circular structure
     is_circular: bool = False
 
+    # Whether this is a pinned structure with fixed position
+    is_pinned: bool = False
+
     # Actual dimensions (grid units)
     width_grid: int = 0
     height_grid: int = 0
+
+    # Optional intervals for rotation (keyed by orientation index)
+    # Both x and y share the same presence literal per orientation
+    optional_x_intervals: Dict[int, cp_model.IntervalVar] = field(default_factory=dict)
+    optional_y_intervals: Dict[int, cp_model.IntervalVar] = field(default_factory=dict)
+    orientation_presence: Dict[int, cp_model.IntVar] = field(default_factory=dict)
 
 
 @dataclass
@@ -182,8 +191,16 @@ class PlacementSolver:
         max_x: int,
         max_y: int,
     ):
-        """Create decision variables for a structure."""
+        """Create decision variables for a structure.
+
+        For rotatable structures, uses optional intervals with reified bounds.
+        Each orientation has its own presence literal shared by both x and y intervals.
+
+        For pinned structures with fixed_position, creates constant variables
+        at the specified location (still added to NoOverlap2D for collision detection).
+        """
         is_circle = struct.is_circle
+        is_pinned = struct.pinned and struct.fixed_position is not None
 
         # Get dimensions
         if is_circle:
@@ -197,177 +214,259 @@ class PlacementSolver:
             height = self._to_grid(fp.h)
             orientations = struct.orientations_deg
 
-        # X and Y position variables (center of structure)
-        # Adjust bounds to keep structure fully inside
-        half_w = max(width, height) // 2 + 1  # Conservative for any rotation
-        half_h = half_w
-
         # Get equipment-specific boundary setback (in addition to buildable area setback)
-        # The buildable area already has property_line_default setback applied,
-        # so we only need to add the EXTRA setback for this equipment type
         equip_setback = self.rules.get_equipment_to_boundary(struct.type)
         default_setback = self.rules.setbacks.property_line_default
         extra_setback = max(0, equip_setback - default_setback)
         extra_setback_grid = self._to_grid(extra_setback)
 
-        # Apply extra boundary margin for this structure
-        x_margin = half_w + extra_setback_grid
-        y_margin = half_h + extra_setback_grid
+        # Handle pinned structures with fixed position
+        if is_pinned:
+            fixed_x = self._to_grid(struct.fixed_position.x)
+            fixed_y = self._to_grid(struct.fixed_position.y)
+            fixed_rot = struct.fixed_position.rotation_deg
 
-        x_var = self.model.NewIntVar(
-            min_x + x_margin, max_x - x_margin, f"x_{struct.id}"
-        )
-        y_var = self.model.NewIntVar(
-            min_y + y_margin, max_y - y_margin, f"y_{struct.id}"
-        )
+            # Create constant variables at fixed position
+            x_var = self.model.NewConstant(fixed_x)
+            y_var = self.model.NewConstant(fixed_y)
 
-        # Orientation variable (for rectangles with multiple orientations)
-        if is_circle or len(orientations) == 1:
-            o_var = None
-            actual_width = width
-            actual_height = height
-        else:
-            # Create orientation variable
-            o_var = self.model.NewIntVarFromDomain(
-                cp_model.Domain.FromValues(list(range(len(orientations)))),
-                f"o_{struct.id}",
+            # Override orientations to only the fixed rotation
+            if not is_circle:
+                orientations = [fixed_rot]
+
+            logger.debug(
+                f"Pinned structure {struct.id} at fixed position "
+                f"({fixed_x}, {fixed_y}) rotation {fixed_rot}°"
             )
-            # Width/height depend on orientation (handled in intervals)
-            actual_width = max(width, height)
-            actual_height = actual_width
+        else:
+            # For rotatable structures, use max dimension for initial domain bounds
+            # (reified constraints will tighten per-orientation)
+            max_half = max(width, height) // 2 + 1
+            x_margin = max_half + extra_setback_grid
+            y_margin = max_half + extra_setback_grid
 
-        # Store structure vars
-        self.struct_vars[struct.id] = StructureVars(
+            x_var = self.model.NewIntVar(
+                min_x + x_margin, max_x - x_margin, f"x_{struct.id}"
+            )
+            y_var = self.model.NewIntVar(
+                min_y + y_margin, max_y - y_margin, f"y_{struct.id}"
+            )
+
+        # Build dimensions by orientation mapping
+        dims_by_orientation = {}
+        for deg in orientations:
+            if deg in [0, 180]:
+                dims_by_orientation[deg] = (width, height)
+            else:  # 90, 270
+                dims_by_orientation[deg] = (height, width)
+
+        # Store initial vars (intervals added in _add_no_overlap_constraint)
+        sv = StructureVars(
             structure_id=struct.id,
             x_var=x_var,
             y_var=y_var,
-            orientation_var=o_var,
+            orientation_var=None,  # Set below for rotatable
             is_circular=is_circle,
+            is_pinned=is_pinned,
             width_grid=width,
             height_grid=height,
-            dims_by_orientation={
-                0: (width, height),
-                90: (height, width),
-                180: (width, height),
-                270: (height, width),
-            },
+            dims_by_orientation=dims_by_orientation,
         )
 
+        # Handle rotation with optional intervals and reified bounds
+        if not is_circle and len(orientations) > 1:
+            # Create presence literal for each orientation
+            # CRITICAL: Both x and y intervals share the SAME presence literal
+            o_vars = []
+            for i, deg in enumerate(orientations):
+                o_var = self.model.NewBoolVar(f"o_{struct.id}_{deg}")
+                o_vars.append(o_var)
+                sv.orientation_presence[i] = o_var
+
+                # Get dimensions for this orientation
+                w, h = dims_by_orientation[deg]
+                half_w = w // 2
+                half_h = h // 2
+
+                # Reify containment bounds per orientation
+                # (tighter than max dimension bounds)
+                self.model.Add(
+                    x_var >= min_x + half_w + extra_setback_grid
+                ).OnlyEnforceIf(o_var)
+                self.model.Add(
+                    x_var <= max_x - half_w - extra_setback_grid
+                ).OnlyEnforceIf(o_var)
+                self.model.Add(
+                    y_var >= min_y + half_h + extra_setback_grid
+                ).OnlyEnforceIf(o_var)
+                self.model.Add(
+                    y_var <= max_y - half_h - extra_setback_grid
+                ).OnlyEnforceIf(o_var)
+
+            # Exactly one orientation must be active
+            self.model.AddExactlyOne(o_vars)
+
+            # Store orientation variable as the index (for solution extraction)
+            sv.orientation_var = self.model.NewIntVarFromDomain(
+                cp_model.Domain.FromValues(list(range(len(orientations)))),
+                f"oidx_{struct.id}",
+            )
+            # Link orientation index to presence bools
+            for i, o_var in enumerate(o_vars):
+                self.model.Add(sv.orientation_var == i).OnlyEnforceIf(o_var)
+
+        self.struct_vars[struct.id] = sv
+
     def _add_no_overlap_constraint(self):
-        """Add NoOverlap2D constraint for all structures."""
+        """Add NoOverlap2D constraint for all structures.
+
+        For rotatable structures, uses optional intervals with presence literals.
+        ALL optional intervals (from all orientations) are added to NoOverlap2D -
+        CP-SAT handles the constraint correctly based on which are "present".
+
+        CLEARANCE: Intervals are expanded by half the max clearance needed,
+        so NoOverlap2D naturally enforces clearance (both structures expand,
+        giving full clearance between them).
+        """
         x_intervals = []
         y_intervals = []
 
         for struct_id, sv in self.struct_vars.items():
-            # Use max dimensions for interval (conservative for any rotation)
-            w = max(sv.width_grid, sv.height_grid)
-            h = w
+            # Compute clearance expansion for this structure
+            # Use ceiling division to ensure full clearance (add 1 to round up)
+            max_clear = self._compute_max_clearance(struct_id)
+            clearance_half = (max_clear + 1) // 2  # Ceiling division
 
-            # Create interval variables
-            # Interval: [start, start + size)
-            x_interval = self.model.NewIntervalVar(
-                sv.x_var - w // 2,  # start
-                w,                   # size
-                sv.x_var + (w - w // 2),  # end
-                f"xi_{struct_id}",
-            )
-            y_interval = self.model.NewIntervalVar(
-                sv.y_var - h // 2,
-                h,
-                sv.y_var + (h - h // 2),
-                f"yi_{struct_id}",
-            )
+            # Check if structure has rotation options
+            has_rotation = len(sv.orientation_presence) > 1
 
-            sv.x_interval = x_interval
-            sv.y_interval = y_interval
+            if has_rotation:
+                # Create optional intervals for each orientation
+                # CRITICAL: Both x and y intervals share the SAME presence literal
+                for i, (deg, (w, h)) in enumerate(sv.dims_by_orientation.items()):
+                    if i not in sv.orientation_presence:
+                        continue  # Skip orientations not in the allowed list
 
-            x_intervals.append(x_interval)
-            y_intervals.append(y_interval)
+                    presence = sv.orientation_presence[i]
+                    # Add clearance expansion to half-dimensions
+                    half_w = w // 2 + clearance_half
+                    half_h = h // 2 + clearance_half
+                    expanded_w = w + 2 * clearance_half
+                    expanded_h = h + 2 * clearance_half
 
-        # Add NoOverlap2D constraint
+                    # Create optional interval for this orientation (with clearance)
+                    x_int = self.model.NewOptionalIntervalVar(
+                        sv.x_var - half_w,    # start
+                        expanded_w,            # size (includes clearance)
+                        sv.x_var + (expanded_w - half_w),  # end
+                        presence,              # is_present literal
+                        f"xi_{struct_id}_{deg}",
+                    )
+                    y_int = self.model.NewOptionalIntervalVar(
+                        sv.y_var - half_h,
+                        expanded_h,
+                        sv.y_var + (expanded_h - half_h),
+                        presence,
+                        f"yi_{struct_id}_{deg}",
+                    )
+
+                    sv.optional_x_intervals[i] = x_int
+                    sv.optional_y_intervals[i] = y_int
+
+                    x_intervals.append(x_int)
+                    y_intervals.append(y_int)
+
+                # Also store the first interval as the "default" for backward compat
+                if 0 in sv.optional_x_intervals:
+                    sv.x_interval = sv.optional_x_intervals[0]
+                    sv.y_interval = sv.optional_y_intervals[0]
+            else:
+                # Non-rotatable structure: use fixed interval with clearance
+                w, h = sv.width_grid, sv.height_grid
+                half_w = w // 2 + clearance_half
+                half_h = h // 2 + clearance_half
+                expanded_w = w + 2 * clearance_half
+                expanded_h = h + 2 * clearance_half
+
+                x_interval = self.model.NewIntervalVar(
+                    sv.x_var - half_w,
+                    expanded_w,
+                    sv.x_var + (expanded_w - half_w),
+                    f"xi_{struct_id}",
+                )
+                y_interval = self.model.NewIntervalVar(
+                    sv.y_var - half_h,
+                    expanded_h,
+                    sv.y_var + (expanded_h - half_h),
+                    f"yi_{struct_id}",
+                )
+
+                sv.x_interval = x_interval
+                sv.y_interval = y_interval
+
+                x_intervals.append(x_interval)
+                y_intervals.append(y_interval)
+
+        # Add NoOverlap2D constraint with all intervals (including optional)
         if x_intervals:
             self.model.AddNoOverlap2D(x_intervals, y_intervals)
 
     def _add_clearance_constraints(self):
         """Add minimum clearance constraints between structures.
 
-        Note: NoOverlap2D handles non-overlap. For additional clearance,
-        we expand the intervals or add distance constraints.
+        CONSERVATIVE APPROACH: Instead of pairwise Manhattan constraints,
+        we compute the max clearance each structure needs and expand its
+        intervals accordingly. This is conservative (may reject valid placements)
+        but dramatically reduces Shapely validator rejects.
+
+        For each structure, we find the maximum clearance it requires to any
+        other structure, then expand its interval by half that clearance.
+        When two structures' expanded intervals don't overlap, they have
+        at least max_clearance/2 + max_clearance/2 = max_clearance between them.
         """
-        # Already handled by inflating circular structures
-        # For additional clearances, we'd need to add explicit distance constraints
+        # Already applied via interval expansion in _add_no_overlap_constraint
+        # The expansion is computed per-structure based on max clearance needed
+        pass
 
-        struct_list = list(self.struct_vars.items())
-        for i, (id1, sv1) in enumerate(struct_list):
-            struct1 = next(s for s in self.structures if s.id == id1)
-            for id2, sv2 in struct_list[i + 1:]:
-                struct2 = next(s for s in self.structures if s.id == id2)
+    def _compute_max_clearance(self, struct_id: str) -> int:
+        """Compute maximum clearance this structure needs to any other.
 
-                # Get required clearance
-                clearance = self.rules.get_clearance(struct1.type, struct2.type)
+        Returns:
+            Maximum clearance in grid units (ceiling to ensure full coverage)
+        """
+        struct = next((s for s in self.structures if s.id == struct_id), None)
+        if struct is None:
+            return 0
+
+        max_clearance = 0
+
+        for other in self.structures:
+            if other.id == struct_id:
+                continue
+            clearance = self.rules.get_clearance(struct.type, other.type)
+            clearance_grid = self._to_grid(clearance)
+            max_clearance = max(max_clearance, clearance_grid)
+
+        return max_clearance
+
+    def _compute_global_max_clearance(self) -> int:
+        """Compute global maximum clearance across all structure pairs.
+
+        This is used for conservative interval expansion where all structures
+        are expanded uniformly.
+
+        Returns:
+            Maximum clearance in grid units
+        """
+        max_clearance = 0
+        for s1 in self.structures:
+            for s2 in self.structures:
+                if s1.id >= s2.id:  # Skip self and duplicates
+                    continue
+                clearance = self.rules.get_clearance(s1.type, s2.type)
                 clearance_grid = self._to_grid(clearance)
-
-                if clearance_grid > 0:
-                    # Add hard clearance constraint between structure centers
-                    # Note: This is a HARD constraint (infeasible if violated)
-                    # Phase 5 validation with Shapely catches true geometry violations
-                    self._add_hard_clearance_constraint(sv1, sv2, clearance_grid)
-
-    def _add_hard_clearance_constraint(
-        self,
-        sv1: StructureVars,
-        sv2: StructureVars,
-        min_dist_grid: int,
-    ):
-        """Add hard clearance constraint between structure centers.
-
-        This is a HARD constraint using AddBoolOr - if no valid separation
-        direction is found, the problem becomes infeasible.
-
-        Uses Manhattan distance approximation since CP-SAT can't handle
-        Euclidean distance directly. The actual Shapely validation in
-        Phase 5 will catch any remaining violations with true geometry.
-        """
-        # Get structure dimensions for interval inflation
-        dims1 = sv1.dims_by_orientation.get(0, (0, 0))
-        dims2 = sv2.dims_by_orientation.get(0, (0, 0))
-
-        # Half-sizes
-        half_w1 = dims1[0] // 2 if dims1[0] else 1
-        half_w2 = dims2[0] // 2 if dims2[0] else 1
-
-        # Inflate intervals by clearance amount
-        # This makes NoOverlap2D enforce clearance as non-overlap
-        clearance_half = min_dist_grid // 2
-
-        # Create inflated intervals for this pair
-        # Note: CP-SAT NoOverlap2D already uses intervals, so we add
-        # additional constraints to ensure centers are far enough apart
-
-        # Minimum center-to-center distance (conservative approximation)
-        min_center_dist = half_w1 + half_w2 + min_dist_grid
-
-        # Add disjunctive constraint: |x1 - x2| + |y1 - y2| >= min_center_dist
-        # Linearized: at least one of the following must be true:
-        # - x1 >= x2 + min_center_dist
-        # - x2 >= x1 + min_center_dist
-        # - y1 >= y2 + min_center_dist
-        # - y2 >= y1 + min_center_dist
-
-        # Create boolean variables for each direction
-        b_x1_right = self.model.NewBoolVar(f"clear_{sv1.structure_id}_{sv2.structure_id}_x1r")
-        b_x2_right = self.model.NewBoolVar(f"clear_{sv1.structure_id}_{sv2.structure_id}_x2r")
-        b_y1_above = self.model.NewBoolVar(f"clear_{sv1.structure_id}_{sv2.structure_id}_y1a")
-        b_y2_above = self.model.NewBoolVar(f"clear_{sv1.structure_id}_{sv2.structure_id}_y2a")
-
-        # If b_x1_right, then x1 >= x2 + min_center_dist
-        self.model.Add(sv1.x_var >= sv2.x_var + min_center_dist).OnlyEnforceIf(b_x1_right)
-        self.model.Add(sv2.x_var >= sv1.x_var + min_center_dist).OnlyEnforceIf(b_x2_right)
-        self.model.Add(sv1.y_var >= sv2.y_var + min_center_dist).OnlyEnforceIf(b_y1_above)
-        self.model.Add(sv2.y_var >= sv1.y_var + min_center_dist).OnlyEnforceIf(b_y2_above)
-
-        # At least one must be true (structures must be separated in at least one axis)
-        self.model.AddBoolOr([b_x1_right, b_x2_right, b_y1_above, b_y2_above])
+                max_clearance = max(max_clearance, clearance_grid)
+        return max_clearance
 
     def _add_topology_constraints(self):
         """Add soft constraints based on process topology."""

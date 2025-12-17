@@ -68,12 +68,16 @@ class SolutionCollector(cp_model.CpSolverSolutionCallback):
             y = y_grid * self.grid_resolution
 
             # Get orientation
+            struct = self.structures[struct_id]
             if sv.orientation_var is not None:
                 o_idx = self.Value(sv.orientation_var)
                 # Map index to actual degrees
-                struct = self.structures[struct_id]
                 rotation = struct.orientations_deg[o_idx] if o_idx < len(struct.orientations_deg) else 0
+            elif sv.is_pinned and struct.fixed_position is not None:
+                # Pinned structure with fixed rotation
+                rotation = struct.fixed_position.rotation_deg
             else:
+                # Circle or single-orientation structure
                 rotation = 0
 
             # Create PlacedStructure
