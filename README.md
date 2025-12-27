@@ -65,7 +65,8 @@ Then open http://localhost:8765 in your browser.
 | `sitefit_get_solution` | Get full solution details including GeoJSON features |
 | `sitefit_list_solutions` | List solutions for a job with pagination |
 | `sitefit_job_status` | Get status and progress of a generation job |
-| `sitefit_export` | Export solution to GeoJSON, SVG, or summary format |
+| `sitefit_export` | Export solution to GeoJSON, SVG, contract, or summary format |
+| `sitefit_export_contract` | Export solution as Spatial Contract JSON for FreeCAD integration |
 | `sitefit_export_pack` | Export bundle with DXF, GeoJSON, CSV quantities, and optional PDF |
 | `sitefit_generate_from_request` | Generate from nested SiteFitRequest object |
 | `sitefit_load_gis_file` | Load site boundary/keepouts/entrances from GIS files |
@@ -397,7 +398,49 @@ Layer auto-detection uses naming conventions:
 - **Keepouts**: "keepout", "easement", "wetland", "flood", "buffer", "setback"
 - **Entrances**: "entrance", "access", "gate", "driveway"
 
+## FreeCAD Integration
+
+Site-fit can export solutions as Spatial Contract JSON for seamless import into FreeCAD via freecad-mcp.
+
+### Contract Export
+
+```python
+# Generate layouts
+result = sitefit_generate(
+    site_boundary=[[0,0], [100,0], [100,80], [0,80], [0,0]],
+    structures=[
+        {"id": "TK-101", "type": "tank", "footprint": {"shape": "circle", "d": 15}},
+        {"id": "BLDG-001", "type": "building", "footprint": {"shape": "rect", "w": 12, "h": 15}},
+    ],
+    entrances=[{"id": "gate", "point": [50, 0], "width": 6}],
+    max_solutions=3
+)
+
+# Export as contract (includes structure dimensions, placements, roads)
+contract = sitefit_export_contract(
+    solution_id=result["solutions"][0]["solution_id"],
+    include_roads=True
+)
+
+# Use with freecad-mcp's import_sitefit_contract tool
+```
+
+### Contract Schema
+
+The contract format includes:
+- **site**: Boundary, entrances, keepouts
+- **program.structures**: Equipment with dimensions (`id`, `type`, `footprint`)
+- **placements**: Solved positions (`id`, `x`, `y`, `rotation_deg`)
+- **road_network**: Segments with start, end, waypoints
+
+Note: Placements use `id` (not `structure_id`) for FreeCAD compatibility.
+
 ## Recent Updates
+
+### v0.4.0 (2025-12-27)
+- **Contract Export**: New `sitefit_export_contract` for FreeCAD integration via freecad-mcp
+- **Contract Format**: Added `format="contract"` option to `sitefit_export`
+- **Structure Dimensions**: Contract export includes original footprint dimensions from request
 
 ### v0.3.0 (2025-12-17)
 - **Export Pack Tool**: New `sitefit_export_pack` for bundled DXF/GeoJSON/CSV/PDF exports

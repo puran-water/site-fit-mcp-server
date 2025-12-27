@@ -105,12 +105,13 @@ async def sitefit_generate(
     try:
         solutions, stats = await generate_site_fits(request)
 
-        # Store solutions
+        # Store solutions and original request for contract export
         job_id = stats.get("job_id", "unknown")
         _jobs[job_id] = {
             "status": "completed",
             "stats": stats,
             "solution_ids": [s.id for s in solutions],
+            "request": request.model_dump(),  # Store for contract export
         }
 
         for sol in solutions:
@@ -184,12 +185,13 @@ async def sitefit_generate_from_request(
         # Run generation
         solutions, stats = await generate_site_fits(site_fit_request)
 
-        # Store solutions
+        # Store solutions and original request for contract export
         job_id = stats.get("job_id", "unknown")
         _jobs[job_id] = {
             "status": "completed",
             "stats": stats,
             "solution_ids": [s.id for s in solutions],
+            "request": site_fit_request.model_dump(),  # Store for contract export
         }
 
         for sol in solutions:
@@ -396,15 +398,17 @@ async def sitefit_job_status(
 async def sitefit_export(
     solution_id: str,
     format: str = "geojson",
+    include_roads: bool = True,
 ) -> dict[str, Any]:
     """Export a solution to various formats.
 
-    Converts solution data to GeoJSON, SVG, or summary formats
+    Converts solution data to GeoJSON, SVG, contract, or summary formats
     for use in external tools and viewers.
 
     Args:
         solution_id: Solution ID from sitefit_generate
-        format: Export format - 'geojson', 'svg', or 'summary' (default: geojson)
+        format: Export format - 'geojson', 'svg', 'contract', or 'summary' (default: geojson)
+        include_roads: Include road network in contract format (default: True)
 
     Returns:
         Dict with format, data (content), and metadata
@@ -499,12 +503,147 @@ async def sitefit_export(
             },
         }
 
+    elif format == "contract":
+        # Contract format for FreeCAD integration
+        # Find the job that contains this solution to get original request
+        job_request = None
+        for job_id, job_data in _jobs.items():
+            if solution_id in job_data.get("solution_ids", []):
+                job_request = job_data.get("request")
+                break
+
+        # Extract site info from request or GeoJSON
+        site_data: dict[str, Any] = {"boundary": [], "entrances": [], "keepouts": []}
+        structures_data: list[dict[str, Any]] = []
+
+        if job_request:
+            site_data = job_request.get("site", {})
+            structures_data = job_request.get("program", {}).get("structures", [])
+        else:
+            # Fallback: extract from GeoJSON features
+            for feature in solution.get("features_geojson", {}).get("features", []):
+                props = feature.get("properties", {})
+                geom = feature.get("geometry", {})
+                kind = props.get("kind")
+
+                if kind == "boundary" and geom.get("type") == "Polygon":
+                    site_data["boundary"] = geom["coordinates"][0]
+                elif kind == "entrance":
+                    site_data["entrances"].append({
+                        "id": props.get("id", ""),
+                        "point": geom.get("coordinates", []),
+                        "width": props.get("width", 6.0),
+                    })
+                elif kind == "keepout":
+                    site_data["keepouts"].append({
+                        "id": props.get("id", ""),
+                        "geometry": geom,
+                        "reason": props.get("reason", ""),
+                    })
+
+        # Build placements with 'id' instead of 'structure_id' for FreeCAD
+        placements = solution.get("placements", [])
+        contract_placements = [
+            {
+                "id": p.get("structure_id"),
+                "x": p.get("x"),
+                "y": p.get("y"),
+                "rotation_deg": p.get("rotation_deg", 0),
+            }
+            for p in placements
+        ]
+
+        # Build road network if requested
+        road_network_data = None
+        if include_roads and solution.get("road_network"):
+            rn = solution["road_network"]
+            road_network_data = {
+                "segments": [
+                    {
+                        "id": seg.get("id"),
+                        "start": seg.get("start"),
+                        "end": seg.get("end"),
+                        "width": seg.get("width", 6.0),
+                        "waypoints": seg.get("waypoints", []),
+                        "connects_to": seg.get("connects_to", []),
+                    }
+                    for seg in rn.get("segments", [])
+                ],
+                "total_length": rn.get("total_length", 0.0),
+                "entrances_connected": rn.get("entrances_connected", []),
+                "structures_accessible": rn.get("structures_accessible", []),
+            }
+
+        return {
+            "format": "contract",
+            "content_type": "application/json",
+            "data": {
+                "project": {
+                    "name": "",
+                    "id": solution_id,
+                    "revision": "A",
+                },
+                "site": {
+                    "boundary": site_data.get("boundary", []),
+                    "entrances": site_data.get("entrances", []),
+                    "keepouts": site_data.get("keepouts", []),
+                },
+                "program": {
+                    "structures": structures_data,
+                },
+                "placements": contract_placements,
+                "road_network": road_network_data,
+                "metadata": {
+                    "source": "sitefit_mcp",
+                    "solution_id": solution_id,
+                    "rank": solution.get("rank", 0),
+                },
+            },
+            "metadata": {
+                "solution_id": solution_id,
+                "rank": solution.get("rank"),
+            },
+        }
+
     else:
         return {
             "isError": True,
             "error": f"Unknown format '{format}'",
-            "suggestion": "Valid formats are: 'geojson', 'svg', 'summary'",
+            "suggestion": "Valid formats are: 'geojson', 'svg', 'contract', 'summary'",
         }
+
+
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_export_contract(
+    solution_id: str,
+    include_roads: bool = True,
+) -> dict[str, Any]:
+    """Export a solution as contract JSON for FreeCAD integration.
+
+    Convenience wrapper for sitefit_export(format='contract') that produces
+    a contract JSON ready for direct use with freecad-mcp's import_sitefit_contract.
+
+    The contract includes:
+    - Site boundary, entrances, and keepouts
+    - Structure definitions with dimensions (from original request)
+    - Placements with 'id' (mapped from structure_id) for FreeCAD compatibility
+    - Road network geometry (optional)
+
+    Args:
+        solution_id: Solution ID from sitefit_generate
+        include_roads: Include road network geometry (default: True)
+
+    Returns:
+        Contract JSON with project, site, program, placements, road_network, metadata
+    """
+    return await sitefit_export(solution_id, format="contract", include_roads=include_roads)
 
 
 @mcp.tool(
