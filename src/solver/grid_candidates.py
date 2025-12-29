@@ -8,7 +8,7 @@ that respect site boundaries and keepout zones at the solver level.
 import logging
 from dataclasses import dataclass
 
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point, Polygon, box
 from shapely.prepared import prep
 from shapely.strtree import STRtree
 
@@ -100,16 +100,23 @@ def compute_valid_candidates(
         effective_h = structure_height
 
     # Shrink buildable area by half structure size to ensure full containment
+    # Use asymmetric shrinking (different amounts in X and Y directions)
+    # This fixes the bug where max(shrink_x, shrink_y) was used uniformly,
+    # causing 80x20m buildings to shrink the region by 40m in all directions
     shrink_x = effective_w / 2
     shrink_y = effective_h / 2
-    shrink_amount = max(shrink_x, shrink_y)
 
-    valid_region = buildable.buffer(-shrink_amount)
+    # Compute shrunk bounds asymmetrically
+    minx, miny, maxx, maxy = buildable.bounds
+    shrunk_bounds = box(minx + shrink_x, miny + shrink_y, maxx - shrink_x, maxy - shrink_y)
+
+    # Intersect with original buildable to handle non-rectangular shapes
+    valid_region = shrunk_bounds.intersection(buildable)
 
     if valid_region.is_empty or not valid_region.is_valid:
         logger.warning(
             f"Structure {structure_id} ({structure_width}x{structure_height}m) "
-            f"is too large for buildable area after shrinking by {shrink_amount}m"
+            f"is too large for buildable area after shrinking by ({shrink_x}, {shrink_y})m"
         )
         return CandidateGrid(
             structure_id=structure_id,
@@ -126,9 +133,11 @@ def compute_valid_candidates(
     keepout_tree = None
     expanded_keepouts = []
     if keepouts:
-        # Expand keepouts by half structure size to prevent overlap
+        # Expand keepouts by max half-dimension to prevent overlap
+        # (conservative: uses max to ensure no overlap at any orientation)
+        keepout_buffer = max(shrink_x, shrink_y)
         for ko in keepouts:
-            expanded = ko.buffer(shrink_amount)
+            expanded = ko.buffer(keepout_buffer)
             if expanded.is_valid and not expanded.is_empty:
                 expanded_keepouts.append(expanded)
         if expanded_keepouts:

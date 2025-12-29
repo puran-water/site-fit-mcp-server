@@ -75,6 +75,35 @@ Then open http://localhost:8765 in your browser.
 | `ruleset_get` | Get ruleset configuration and JSON schema |
 | `topology_parse_sfiles2` | Parse and validate SFILES2 topology strings |
 
+### Response Detail Level
+
+All tools support a `detail_level` parameter to reduce context consumption:
+
+| Value | Description |
+|-------|-------------|
+| `"compact"` (default) | Returns only essential fields for workflows. ~60-80% context reduction. |
+| `"full"` | Returns all metrics, statistics, and debug information. |
+
+**Compact mode includes:**
+- Core identifiers: `job_id`, `solution_id`, `status`
+- Key metrics: `compactness`, `road_length`, `is_feasible`
+- Essential placement data: `structure_id`, `x`, `y`, `rotation_deg`, `width`, `height`, `shape`
+- Error information when present
+
+**Full mode adds:**
+- Complete metrics (20+ fields)
+- Full statistics (solve times, candidate counts)
+- Diversity notes and debug information
+
+Example:
+```python
+# Compact response (default) - for production workflows
+result = sitefit_generate(site_boundary=..., structures=..., detail_level="compact")
+
+# Full response - for debugging
+result = sitefit_generate(site_boundary=..., structures=..., detail_level="full")
+```
+
 ## API Reference
 
 ### sitefit_generate
@@ -436,6 +465,13 @@ The contract format includes:
 Note: Placements use `id` (not `structure_id`) for FreeCAD compatibility.
 
 ## Recent Updates
+
+### v0.5.0 (2025-12-29)
+- **Context Optimization**: Added `detail_level` parameter to all tools (default: `"compact"`)
+- **Compact Mode**: ~60-80% context reduction in typical responses
+- **Response Filters**: New `response_filters.py` module for field filtering
+- **Metrics Filtering**: Compact mode returns only 3 key metrics vs 20+ in full mode
+- **Statistics Filtering**: `sitefit_job_status` omits statistics in compact mode
 
 ### v0.4.0 (2025-12-27)
 - **Contract Export**: New `sitefit_export_contract` for FreeCAD integration via freecad-mcp

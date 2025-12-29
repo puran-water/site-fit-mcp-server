@@ -40,7 +40,9 @@ class PlacementSolverConfig:
     compactness_weight: int = 1      # Weight for compactness objective
 
     # Circle inflation factor for bounding boxes (to ensure clearance)
-    circle_inflation: float = 1.1
+    # Changed from 1.1 to 1.0 - the 10% inflation was causing infeasibility
+    # for large circular structures like 36m digesters on constrained sites
+    circle_inflation: float = 1.0
 
     # Whether to enable OR-Tools symmetry breaking
     symmetry_breaking: bool = True
@@ -238,11 +240,19 @@ class PlacementSolver:
                 f"({fixed_x}, {fixed_y}) rotation {fixed_rot}°"
             )
         else:
-            # For rotatable structures, use max dimension for initial domain bounds
-            # (reified constraints will tighten per-orientation)
-            max_half = max(width, height) // 2 + 1
-            x_margin = max_half + extra_setback_grid
-            y_margin = max_half + extra_setback_grid
+            # Compute margins based on structure dimensions
+            # For rotatable structures (multiple orientations), use max dimension
+            # For non-rotatable structures, use actual asymmetric dimensions
+            if len(orientations) > 1:
+                # Rotatable: max dimension for both axes (reified constraints tighten later)
+                max_half = max(width, height) // 2 + 1
+                x_margin = max_half + extra_setback_grid
+                y_margin = max_half + extra_setback_grid
+            else:
+                # Non-rotatable: use asymmetric dimensions for each axis
+                # This fixes the bug where 80x20 buildings used 40m margin on both axes
+                x_margin = width // 2 + 1 + extra_setback_grid
+                y_margin = height // 2 + 1 + extra_setback_grid
 
             x_var = self.model.NewIntVar(
                 min_x + x_margin, max_x - x_margin, f"x_{struct.id}"

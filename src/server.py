@@ -13,6 +13,13 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from .pipeline import generate_site_fits
+from .response_filters import (
+    DetailLevel,
+    filter_metrics,
+    filter_solution_summary,
+    filter_statistics,
+    filter_topology_result,
+)
 from .tools.sitefit_tools import (
     SiteFitRequest,
 )
@@ -61,6 +68,7 @@ async def sitefit_generate(
     max_solutions: int = 5,
     max_time_seconds: float = 60.0,
     seed: int = 42,
+    detail_level: DetailLevel = "compact",
 ) -> dict[str, Any]:
     """Generate site layout solutions for wastewater/biogas facilities.
 
@@ -79,6 +87,8 @@ async def sitefit_generate(
         max_solutions: Maximum solutions to return (1-50, default 5)
         max_time_seconds: Maximum solve time (5-600 seconds, default 60)
         seed: Random seed for reproducibility (default 42)
+        detail_level: Response detail - "compact" (default) for essential fields,
+                      "full" for all metrics and statistics
 
     Returns:
         Dict with job_id, status, num_solutions, solutions list, and statistics
@@ -117,22 +127,32 @@ async def sitefit_generate(
         for sol in solutions:
             _solutions[sol.id] = sol.model_dump()
 
-        # Build response
-        return {
+        # Build response with filtered fields based on detail_level
+        solution_summaries = []
+        for s in solutions:
+            summary = {
+                "id": s.id,
+                "rank": s.rank,
+                "metrics": filter_metrics(s.metrics.model_dump(), detail_level),
+            }
+            if detail_level == "full":
+                summary["diversity_note"] = s.diversity_note
+            solution_summaries.append(summary)
+
+        response = {
             "job_id": job_id,
             "status": "completed",
             "num_solutions": len(solutions),
-            "solutions": [
-                {
-                    "id": s.id,
-                    "rank": s.rank,
-                    "metrics": s.metrics.model_dump(),
-                    "diversity_note": s.diversity_note,
-                }
-                for s in solutions
-            ],
-            "statistics": stats,
+            "solutions": solution_summaries,
         }
+
+        # Include statistics based on detail_level
+        if detail_level == "full":
+            response["statistics"] = stats
+        else:
+            response["statistics"] = filter_statistics(stats, detail_level)
+
+        return response
 
     except Exception as e:
         logger.exception("Generation failed")
@@ -158,6 +178,7 @@ async def sitefit_generate(
 )
 async def sitefit_generate_from_request(
     request: dict[str, Any],
+    detail_level: DetailLevel = "compact",
 ) -> dict[str, Any]:
     """Generate site layout solutions from a complete SiteFitRequest object.
 
@@ -166,6 +187,8 @@ async def sitefit_generate_from_request(
 
     Args:
         request: Full SiteFitRequest object with site, program, topology, rules_override, generation
+        detail_level: Response detail - "compact" (default) for essential fields,
+                      "full" for all metrics and statistics
 
     Returns:
         Dict with job_id, status, num_solutions, solutions list, and statistics
@@ -197,22 +220,32 @@ async def sitefit_generate_from_request(
         for sol in solutions:
             _solutions[sol.id] = sol.model_dump()
 
-        # Build response
-        return {
+        # Build response with filtered fields based on detail_level
+        solution_summaries = []
+        for s in solutions:
+            summary = {
+                "id": s.id,
+                "rank": s.rank,
+                "metrics": filter_metrics(s.metrics.model_dump(), detail_level),
+            }
+            if detail_level == "full":
+                summary["diversity_note"] = s.diversity_note
+            solution_summaries.append(summary)
+
+        response = {
             "job_id": job_id,
             "status": "completed",
             "num_solutions": len(solutions),
-            "solutions": [
-                {
-                    "id": s.id,
-                    "rank": s.rank,
-                    "metrics": s.metrics.model_dump(),
-                    "diversity_note": s.diversity_note,
-                }
-                for s in solutions
-            ],
-            "statistics": stats,
+            "solutions": solution_summaries,
         }
+
+        # Include statistics based on detail_level
+        if detail_level == "full":
+            response["statistics"] = stats
+        else:
+            response["statistics"] = filter_statistics(stats, detail_level)
+
+        return response
 
     except Exception as e:
         logger.exception("Generation failed")
@@ -239,6 +272,7 @@ async def sitefit_generate_from_request(
 async def sitefit_get_solution(
     solution_id: str,
     include_geojson: bool = True,
+    detail_level: DetailLevel = "compact",
 ) -> dict[str, Any]:
     """Get full details of a specific solution by ID.
 
@@ -248,6 +282,8 @@ async def sitefit_get_solution(
     Args:
         solution_id: Solution ID from sitefit_generate response
         include_geojson: Include GeoJSON feature collection (default True)
+        detail_level: Response detail - "compact" (default) for essential fields,
+                      "full" for all metrics and metadata
 
     Returns:
         Full solution with placements, metrics, road_network, and features_geojson
@@ -261,12 +297,26 @@ async def sitefit_get_solution(
 
     solution = _solutions[solution_id]
 
-    if not include_geojson and "features_geojson" in solution:
-        # Return without GeoJSON for smaller response
-        result = {k: v for k, v in solution.items() if k != "features_geojson"}
-        return result
+    # Build filtered response
+    result = {
+        "id": solution.get("id"),
+        "job_id": solution.get("job_id"),
+        "rank": solution.get("rank"),
+        "placements": solution.get("placements", []),  # Always include full placements
+        "road_network": solution.get("road_network"),
+        "metrics": filter_metrics(solution.get("metrics", {}), detail_level),
+    }
 
-    return solution
+    # Add optional fields for full mode
+    if detail_level == "full":
+        result["created_at"] = solution.get("created_at")
+        result["diversity_note"] = solution.get("diversity_note")
+
+    # Include GeoJSON if requested
+    if include_geojson and "features_geojson" in solution:
+        result["features_geojson"] = solution["features_geojson"]
+
+    return result
 
 
 @mcp.tool(
@@ -281,6 +331,7 @@ async def sitefit_list_solutions(
     job_id: str,
     limit: int = 20,
     offset: int = 0,
+    detail_level: DetailLevel = "compact",
 ) -> dict[str, Any]:
     """List solutions for a job with pagination.
 
@@ -291,6 +342,8 @@ async def sitefit_list_solutions(
         job_id: Job ID from sitefit_generate
         limit: Maximum solutions to return (default 20)
         offset: Offset for pagination (default 0)
+        detail_level: Response detail - "compact" (default) for essential fields,
+                      "full" for all metrics
 
     Returns:
         Dict with job_id, total, offset, limit, solutions, has_more, next_offset
@@ -313,12 +366,14 @@ async def sitefit_list_solutions(
     for sol_id in paginated_ids:
         if sol_id in _solutions:
             sol = _solutions[sol_id]
-            solutions.append({
+            summary = {
                 "id": sol["id"],
                 "rank": sol["rank"],
-                "metrics": sol.get("metrics", {}),
-                "diversity_note": sol.get("diversity_note"),
-            })
+                "metrics": filter_metrics(sol.get("metrics", {}), detail_level),
+            }
+            if detail_level == "full":
+                summary["diversity_note"] = sol.get("diversity_note")
+            solutions.append(summary)
 
     total = len(solution_ids)
     has_more = offset + limit < total
@@ -345,6 +400,7 @@ async def sitefit_list_solutions(
 )
 async def sitefit_job_status(
     job_id: str,
+    detail_level: DetailLevel = "compact",
 ) -> dict[str, Any]:
     """Get the status of a site-fit generation job.
 
@@ -353,6 +409,8 @@ async def sitefit_job_status(
 
     Args:
         job_id: Job ID from sitefit_generate
+        detail_level: Response detail - "compact" (default) for essential stats,
+                      "full" for all statistics
 
     Returns:
         Dict with job_id, status, progress (0-100), and job details
@@ -376,11 +434,9 @@ async def sitefit_job_status(
 
     if status == "completed":
         result["num_solutions"] = len(job.get("solution_ids", []))
-        result["statistics"] = {
-            "cpsat_solutions": stats.get("cpsat_solutions", 0),
-            "validated_solutions": stats.get("validated_solutions", 0),
-            "total_time_seconds": stats.get("total_time_seconds", 0),
-        }
+        # Only include statistics in full mode per plan
+        if detail_level == "full":
+            result["statistics"] = stats
     elif status == "failed":
         result["error"] = job.get("error", "Unknown error")
 
@@ -399,6 +455,7 @@ async def sitefit_export(
     solution_id: str,
     format: str = "geojson",
     include_roads: bool = True,
+    detail_level: DetailLevel = "compact",
 ) -> dict[str, Any]:
     """Export a solution to various formats.
 
@@ -409,6 +466,8 @@ async def sitefit_export(
         solution_id: Solution ID from sitefit_generate
         format: Export format - 'geojson', 'svg', 'contract', or 'summary' (default: geojson)
         include_roads: Include road network in contract format (default: True)
+        detail_level: Response detail - "compact" (default) omits extra metadata,
+                      "full" includes all metadata
 
     Returns:
         Dict with format, data (content), and metadata
@@ -424,15 +483,17 @@ async def sitefit_export(
     format = format.lower()
 
     if format == "geojson":
-        return {
+        result = {
             "format": "geojson",
             "content_type": "application/geo+json",
             "data": solution.get("features_geojson", {}),
-            "metadata": {
+        }
+        if detail_level == "full":
+            result["metadata"] = {
                 "solution_id": solution_id,
                 "rank": solution.get("rank"),
-            },
-        }
+            }
+        return result
 
     elif format == "svg":
         # Use SVG export module
@@ -465,15 +526,17 @@ async def sitefit_export(
                 show_roads=True,
             )
 
-            return {
+            result = {
                 "format": "svg",
                 "content_type": "image/svg+xml",
                 "data": svg_content,
-                "metadata": {
+            }
+            if detail_level == "full":
+                result["metadata"] = {
                     "solution_id": solution_id,
                     "rank": solution.get("rank"),
-                },
-            }
+                }
+            return result
         except Exception as e:
             logger.exception("SVG export failed")
             return {
@@ -486,22 +549,25 @@ async def sitefit_export(
         metrics = solution.get("metrics", {})
         placements = solution.get("placements", [])
 
-        return {
+        data = {
+            "solution_id": solution_id,
+            "rank": solution.get("rank"),
+            "num_structures": len(placements),
+            "metrics": filter_metrics(metrics, detail_level),
+            "has_road_network": solution.get("road_network") is not None,
+            "structure_ids": [p.get("structure_id") for p in placements],
+        }
+        if detail_level == "full":
+            data["diversity_note"] = solution.get("diversity_note")
+
+        result = {
             "format": "summary",
             "content_type": "application/json",
-            "data": {
-                "solution_id": solution_id,
-                "rank": solution.get("rank"),
-                "num_structures": len(placements),
-                "metrics": metrics,
-                "diversity_note": solution.get("diversity_note"),
-                "has_road_network": solution.get("road_network") is not None,
-                "structure_ids": [p.get("structure_id") for p in placements],
-            },
-            "metadata": {
-                "solution_id": solution_id,
-            },
+            "data": data,
         }
+        if detail_level == "full":
+            result["metadata"] = {"solution_id": solution_id}
+        return result
 
     elif format == "contract":
         # Contract format for FreeCAD integration
@@ -574,36 +640,44 @@ async def sitefit_export(
                 "structures_accessible": rn.get("structures_accessible", []),
             }
 
-        return {
+        # Build contract data - always include essential fields for FreeCAD
+        contract_data = {
+            "project": {
+                "name": "",
+                "id": solution_id,
+                "revision": "A",
+            },
+            "site": {
+                "boundary": site_data.get("boundary", []),
+                "entrances": site_data.get("entrances", []),
+                "keepouts": site_data.get("keepouts", []),
+            },
+            "program": {
+                "structures": structures_data,
+            },
+            "placements": contract_placements,
+            "road_network": road_network_data,
+        }
+
+        # Only include metadata in full mode
+        if detail_level == "full":
+            contract_data["metadata"] = {
+                "source": "sitefit_mcp",
+                "solution_id": solution_id,
+                "rank": solution.get("rank", 0),
+            }
+
+        result = {
             "format": "contract",
             "content_type": "application/json",
-            "data": {
-                "project": {
-                    "name": "",
-                    "id": solution_id,
-                    "revision": "A",
-                },
-                "site": {
-                    "boundary": site_data.get("boundary", []),
-                    "entrances": site_data.get("entrances", []),
-                    "keepouts": site_data.get("keepouts", []),
-                },
-                "program": {
-                    "structures": structures_data,
-                },
-                "placements": contract_placements,
-                "road_network": road_network_data,
-                "metadata": {
-                    "source": "sitefit_mcp",
-                    "solution_id": solution_id,
-                    "rank": solution.get("rank", 0),
-                },
-            },
-            "metadata": {
+            "data": contract_data,
+        }
+        if detail_level == "full":
+            result["metadata"] = {
                 "solution_id": solution_id,
                 "rank": solution.get("rank"),
-            },
-        }
+            }
+        return result
 
     else:
         return {
@@ -624,6 +698,7 @@ async def sitefit_export(
 async def sitefit_export_contract(
     solution_id: str,
     include_roads: bool = True,
+    detail_level: DetailLevel = "compact",
 ) -> dict[str, Any]:
     """Export a solution as contract JSON for FreeCAD integration.
 
@@ -639,11 +714,13 @@ async def sitefit_export_contract(
     Args:
         solution_id: Solution ID from sitefit_generate
         include_roads: Include road network geometry (default: True)
+        detail_level: Response detail - "compact" (default) for essential fields,
+            "full" for all fields including metadata
 
     Returns:
         Contract JSON with project, site, program, placements, road_network, metadata
     """
-    return await sitefit_export(solution_id, format="contract", include_roads=include_roads)
+    return await sitefit_export(solution_id, format="contract", include_roads=include_roads, detail_level=detail_level)
 
 
 @mcp.tool(
@@ -856,6 +933,7 @@ async def ruleset_get(
 )
 async def topology_parse_sfiles2(
     sfiles2: str,
+    detail_level: DetailLevel = "compact",
 ) -> dict[str, Any]:
     """Parse and validate an SFILES2 process topology string.
 
@@ -864,6 +942,8 @@ async def topology_parse_sfiles2(
 
     Args:
         sfiles2: SFILES2 string (e.g., "(influent)pump|P-101(tank)T-101")
+        detail_level: Response detail - "compact" (default) for summary only,
+                      "full" includes nodes, edges, and tokens arrays
 
     Returns:
         Dict with valid (bool), nodes, edges, tokens, num_nodes, num_edges.
@@ -875,20 +955,25 @@ async def topology_parse_sfiles2(
         topology = parse_sfiles_topology(sfiles2)
         tokens = tokenize_sfiles(sfiles2)
 
-        return {
+        result = {
             "valid": True,
-            "nodes": [n.model_dump() for n in topology.nodes],
-            "edges": [e.model_dump() for e in topology.edges],
-            "tokens": tokens,
             "num_nodes": len(topology.nodes),
             "num_edges": len(topology.edges),
         }
+
+        # Include full arrays only in full mode
+        if detail_level == "full":
+            result["nodes"] = [n.model_dump() for n in topology.nodes]
+            result["edges"] = [e.model_dump() for e in topology.edges]
+            result["tokens"] = tokens
+
+        return result
     except Exception as e:
         return {
             "valid": False,
             "error": str(e),
-            "nodes": [],
-            "edges": [],
+            "num_nodes": 0,
+            "num_edges": 0,
         }
 
 
