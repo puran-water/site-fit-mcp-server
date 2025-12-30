@@ -586,7 +586,7 @@ async def sitefit_export(
             site_data = job_request.get("site", {})
             structures_data = job_request.get("program", {}).get("structures", [])
         else:
-            # Fallback: extract from GeoJSON features
+            # Fallback: extract from GeoJSON features (e.g., after server restart)
             for feature in solution.get("features_geojson", {}).get("features", []):
                 props = feature.get("properties", {})
                 geom = feature.get("geometry", {})
@@ -606,6 +606,34 @@ async def sitefit_export(
                         "geometry": geom,
                         "reason": props.get("reason", ""),
                     })
+                elif kind == "structure":
+                    # Extract structure dimensions from GeoJSON geometry
+                    struct_id = props.get("id", props.get("structure_id", ""))
+                    struct_type = props.get("type", "unknown")
+                    height = props.get("height", 5.0)
+
+                    # Determine shape and dimensions from geometry
+                    if geom.get("type") == "Polygon":
+                        coords = geom.get("coordinates", [[]])[0]
+                        if len(coords) >= 4:
+                            # Calculate bounding box
+                            xs = [c[0] for c in coords]
+                            ys = [c[1] for c in coords]
+                            width = max(xs) - min(xs)
+                            length = max(ys) - min(ys)
+
+                            # Check if roughly circular (width ~= length and many points)
+                            if len(coords) > 8 and abs(width - length) < 0.1 * max(width, length):
+                                footprint = {"shape": "circle", "d": (width + length) / 2}
+                            else:
+                                footprint = {"shape": "rect", "w": width, "h": length}
+
+                            structures_data.append({
+                                "id": struct_id,
+                                "type": struct_type,
+                                "footprint": footprint,
+                                "height": height,
+                            })
 
         # Build placements with 'id' instead of 'structure_id' for FreeCAD
         placements = solution.get("placements", [])
