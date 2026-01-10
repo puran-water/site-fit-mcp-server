@@ -125,7 +125,14 @@ def export_pack(
                     result.files["pdf"] = str(file_path)
                     result.formats_generated.append("pdf")
                 else:
-                    result.errors["pdf"] = "weasyprint not installed"
+                    result.errors["pdf"] = "reportlab and weasyprint not installed"
+
+            elif fmt == "svg":
+                file_path = _export_svg(
+                    solution, output_path, boundary, structure_types
+                )
+                result.files["svg"] = str(file_path)
+                result.formats_generated.append("svg")
 
             else:
                 result.errors[fmt] = f"Unknown format: {fmt}"
@@ -224,6 +231,108 @@ def _export_dxf(
     return file_path
 
 
+def _export_svg(
+    solution: SiteFitSolution,
+    output_path: Path,
+    boundary: Polygon,
+    structure_types: dict[str, str],
+) -> Path:
+    """Export solution as SVG for web viewing.
+
+    Pure Python SVG generation - no external dependencies required.
+    """
+    file_path = output_path / f"{solution.id}_layout.svg"
+
+    # Calculate bounds and viewBox
+    bounds = boundary.bounds  # (minx, miny, maxx, maxy)
+    minx, miny, maxx, maxy = bounds
+    width = maxx - minx
+    height = maxy - miny
+    padding = max(width, height) * 0.05
+
+    # SVG viewBox with some padding
+    vb_minx = minx - padding
+    vb_miny = miny - padding
+    vb_width = width + 2 * padding
+    vb_height = height + 2 * padding
+
+    # Start SVG
+    svg_lines = [
+        f'<?xml version="1.0" encoding="UTF-8"?>',
+        f'<svg xmlns="http://www.w3.org/2000/svg" ',
+        f'     viewBox="{vb_minx:.2f} {-vb_miny - vb_height:.2f} {vb_width:.2f} {vb_height:.2f}"',
+        f'     width="{vb_width * 5:.0f}" height="{vb_height * 5:.0f}">',
+        f'  <defs>',
+        f'    <style>',
+        f'      .boundary {{ fill: #f5f5f5; stroke: #333; stroke-width: 0.5; }}',
+        f'      .structure-rect {{ fill: #cce5cc; stroke: #4a7c4a; stroke-width: 0.3; }}',
+        f'      .structure-circle {{ fill: #b3d9ff; stroke: #336699; stroke-width: 0.3; }}',
+        f'      .road {{ fill: none; stroke: #808080; stroke-width: 1; stroke-dasharray: 2,1; }}',
+        f'      .label {{ font-family: Arial, sans-serif; font-size: 2px; text-anchor: middle; }}',
+        f'    </style>',
+        f'  </defs>',
+        f'  <g transform="scale(1,-1)">',  # Flip Y axis
+    ]
+
+    # Draw boundary
+    coords = list(boundary.exterior.coords)
+    points_str = " ".join(f"{x:.2f},{y:.2f}" for x, y in coords)
+    svg_lines.append(f'    <polygon class="boundary" points="{points_str}" />')
+
+    # Draw road network
+    road_network = getattr(solution, "road_network", None)
+    if road_network and hasattr(road_network, "segments"):
+        for segment in road_network.segments:
+            centerline = getattr(segment, "centerline", [])
+            if len(centerline) >= 2:
+                points_str = " ".join(f"{x:.2f},{y:.2f}" for x, y in centerline)
+                svg_lines.append(f'    <polyline class="road" points="{points_str}" />')
+
+    # Draw placements
+    for placement in solution.placements:
+        px, py = placement.x, placement.y
+        structure = next(
+            (s for s in (solution.structures or []) if s.id == placement.structure_id),
+            None
+        )
+
+        if structure and structure.footprint:
+            footprint = structure.footprint
+            shape = footprint.get("shape", "rectangle")
+
+            if shape == "circle":
+                d = footprint.get("d", 10)
+                radius = d / 2
+                svg_lines.append(
+                    f'    <circle class="structure-circle" cx="{px:.2f}" cy="{py:.2f}" r="{radius:.2f}" />'
+                )
+            else:
+                w = footprint.get("w", 10)
+                l = footprint.get("l", 10)
+                svg_lines.append(
+                    f'    <rect class="structure-rect" '
+                    f'x="{px - w/2:.2f}" y="{py - l/2:.2f}" '
+                    f'width="{w:.2f}" height="{l:.2f}" />'
+                )
+        else:
+            # Generic marker
+            svg_lines.append(
+                f'    <circle class="structure-circle" cx="{px:.2f}" cy="{py:.2f}" r="2" />'
+            )
+
+        # Label (flip Y for text)
+        svg_lines.append(
+            f'    <text class="label" x="{px:.2f}" y="{-py:.2f}" '
+            f'transform="scale(1,-1)">{placement.structure_id}</text>'
+        )
+
+    svg_lines.append('  </g>')
+    svg_lines.append('</svg>')
+
+    file_path.write_text("\n".join(svg_lines))
+    return file_path
+
+
 def _export_pdf(
     solution: SiteFitSolution,
     output_path: Path,
@@ -233,28 +342,56 @@ def _export_pdf(
     drawing_number: str,
     tight_constraints: list[str],
 ) -> Path | None:
-    """Export solution as PDF plan sheet."""
-    try:
-        from .pdf_report import PDFReportConfig, generate_pdf_report
-    except ImportError:
-        return None
+    """Export solution as PDF plan sheet.
 
+    Tries ReportLab (headless-safe) first, falls back to weasyprint.
+    """
     file_path = output_path / f"{solution.id}_plan.pdf"
 
-    config = PDFReportConfig(
-        title="Site Layout Plan",
-        project_name=project_name,
-        drawing_number=drawing_number or solution.id,
-    )
+    # Try headless-safe ReportLab first
+    try:
+        from .pdf_reportlab import PDFConfig, generate_pdf_headless
 
-    pdf_bytes = generate_pdf_report(
-        solution=solution,
-        boundary=boundary,
-        takeoff=takeoff,
-        config=config,
-        tight_constraints=tight_constraints,
-    )
+        config = PDFConfig(
+            title="Site Layout Plan",
+            project_name=project_name,
+            drawing_number=drawing_number or solution.id,
+        )
 
-    file_path.write_bytes(pdf_bytes)
+        pdf_bytes = generate_pdf_headless(
+            solution=solution,
+            boundary=boundary,
+            takeoff=takeoff,
+            config=config,
+            tight_constraints=tight_constraints,
+        )
 
-    return file_path
+        file_path.write_bytes(pdf_bytes)
+        return file_path
+
+    except ImportError:
+        pass  # ReportLab not available, try weasyprint
+
+    # Fallback to weasyprint (may require GUI dependencies)
+    try:
+        from .pdf_report import PDFReportConfig, generate_pdf_report
+
+        config = PDFReportConfig(
+            title="Site Layout Plan",
+            project_name=project_name,
+            drawing_number=drawing_number or solution.id,
+        )
+
+        pdf_bytes = generate_pdf_report(
+            solution=solution,
+            boundary=boundary,
+            takeoff=takeoff,
+            config=config,
+            tight_constraints=tight_constraints,
+        )
+
+        file_path.write_bytes(pdf_bytes)
+        return file_path
+
+    except ImportError:
+        return None

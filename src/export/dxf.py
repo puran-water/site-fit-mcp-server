@@ -105,15 +105,34 @@ def solution_to_dxf(
 
 
 def _create_layers(doc: Drawing) -> None:
-    """Create standard layers for site layout."""
+    """Create standard layers for civil engineering site layout.
+
+    Layer structure follows civil engineering conventions:
+    - BOUNDARY: Site boundary polygon
+    - BUILDLIMIT: Buildable area after setbacks (dashed)
+    - SETBACKS: Setback lines from boundaries
+    - KEEPOUTS: No-build zones (hatched)
+    - ENTRANCES: Site entrance points
+    - STRUCTURES: Equipment footprints
+    - STRUCTURE_LABELS: Equipment ID labels
+    - ROAD_CENTERLINE: Road alignment centerlines (for civil alignment)
+    - ROAD_EDGE: Edge of pavement lines
+    - ROAD_SURFACE: Road surface areas (optional hatch)
+    - HAZARD_ZONES: NFPA 820 hazard classification zones
+    - CENTERLINES: Equipment centerpoint markers
+    """
     layers = [
         ("BOUNDARY", 7),          # White
         ("BUILDLIMIT", 3),        # Green - buildable area after setbacks
+        ("SETBACKS", 3),          # Green - setback lines
         ("KEEPOUTS", 1),          # Red
         ("ENTRANCES", 3),         # Green
         ("STRUCTURES", 5),        # Blue
         ("STRUCTURE_LABELS", 7),  # White
-        ("ROADS", 4),             # Cyan
+        ("ROAD_CENTERLINE", 2),   # Yellow - for civil alignment
+        ("ROAD_EDGE", 4),         # Cyan - edge of pavement
+        ("ROAD_SURFACE", 8),      # Gray - pavement area (optional)
+        ("ROADS", 4),             # Cyan (legacy, kept for compatibility)
         ("HAZARD_ZONES", 1),      # Red (for hazard zones)
         ("HAZARD_DIV1", 30),      # Orange (Class I Div 1)
         ("HAZARD_DIV2", 40),      # Light red (Class I Div 2)
@@ -213,12 +232,48 @@ def _add_structure(msp, placement, doc: Drawing) -> None:
 
 
 def _add_road_network(msp, road_network) -> None:
-    """Add road network as polylines."""
+    """Add road network with civil engineering layer structure.
+
+    Creates:
+    - ROAD_CENTERLINE: Alignment centerlines (yellow, for civil alignment)
+    - ROAD_EDGE: Edge of pavement lines (cyan, solid)
+    - ROAD_SURFACE: Optional road surface hatching (gray)
+    - ROADS: Legacy layer (for compatibility)
+    """
     for segment in road_network.segments:
         coords = segment.to_linestring_coords()
         if len(coords) >= 2:
             points = [(c[0], c[1]) for c in coords]
-            # Centerline
+
+            # 1. Centerline (for civil alignment - dashed yellow)
+            msp.add_lwpolyline(
+                points,
+                dxfattribs={
+                    "layer": "ROAD_CENTERLINE",
+                    "linetype": "CENTER",
+                }
+            )
+
+            # 2. Edge of pavement (if available)
+            if hasattr(segment, 'edge_left') and segment.edge_left:
+                edge_left_coords = segment.edge_left
+                if len(edge_left_coords) >= 2:
+                    left_points = [(c[0], c[1]) for c in edge_left_coords]
+                    msp.add_lwpolyline(
+                        left_points,
+                        dxfattribs={"layer": "ROAD_EDGE"}
+                    )
+
+            if hasattr(segment, 'edge_right') and segment.edge_right:
+                edge_right_coords = segment.edge_right
+                if len(edge_right_coords) >= 2:
+                    right_points = [(c[0], c[1]) for c in edge_right_coords]
+                    msp.add_lwpolyline(
+                        right_points,
+                        dxfattribs={"layer": "ROAD_EDGE"}
+                    )
+
+            # 3. Also add to legacy ROADS layer for compatibility
             msp.add_lwpolyline(
                 points,
                 dxfattribs={"layer": "ROADS"}

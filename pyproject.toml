@@ -24,6 +24,7 @@ dependencies = [
     "scikit-learn>=1.3.0",
     "numpy>=1.24.0",
     "geojson>=3.0.0",
+    "structlog>=24.0.0",
 ]
 
 [project.optional-dependencies]
@@ -45,9 +46,18 @@ gis = [
 pdf = [
     "weasyprint>=62.0",
 ]
+pdf-headless = [
+    "reportlab>=4.0.0",
+    "svglib>=1.5.0",
+]
 export = [
     "ezdxf>=1.0.0",
     "weasyprint>=62.0",
+]
+export-headless = [
+    "ezdxf>=1.0.0",
+    "reportlab>=4.0.0",
+    "svglib>=1.5.0",
 ]
 
 [project.scripts]

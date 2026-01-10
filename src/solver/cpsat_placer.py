@@ -144,8 +144,19 @@ class PlacementSolver:
         self._build_model()
 
     def _to_grid(self, value: float) -> int:
-        """Convert meters to grid units."""
+        """Convert meters to grid units (floors - use for max bounds)."""
         return int(value / self.config.grid_resolution)
+
+    def _to_grid_ceil(self, value: float) -> int:
+        """Convert meters to grid units, rounding UP.
+
+        Use for minimum margins (setbacks, clearances, dimensions) to ensure
+        conservative constraints. Per DeepWiki OR-Tools guidance:
+        - ceil for lower bounds/minimum distances
+        - floor for upper bounds
+        """
+        import math
+        return math.ceil(value / self.config.grid_resolution)
 
     def _from_grid(self, value: int) -> float:
         """Convert grid units to meters."""
@@ -203,7 +214,8 @@ class PlacementSolver:
         is_circle = struct.is_circle
         is_pinned = struct.pinned and struct.fixed_position is not None
 
-        # Get dimensions
+        # Get dimensions - use standard rounding (floor) for dimensions
+        # Dimensions are fixed sizes, not bounds. Ceil is only for margins/setbacks.
         if is_circle:
             fp = struct.footprint  # type: ignore
             dim = self._to_grid(fp.d * self.config.circle_inflation)
@@ -219,7 +231,8 @@ class PlacementSolver:
         equip_setback = self.rules.get_equipment_to_boundary(struct.type)
         default_setback = self.rules.setbacks.property_line_default
         extra_setback = max(0, equip_setback - default_setback)
-        extra_setback_grid = self._to_grid(extra_setback)
+        # Use ceil for minimum margins to ensure conservative placement
+        extra_setback_grid = self._to_grid_ceil(extra_setback)
 
         # Handle pinned structures with fixed position
         if is_pinned:
@@ -453,7 +466,8 @@ class PlacementSolver:
             if other.id == struct_id:
                 continue
             clearance = self.rules.get_clearance(struct.type, other.type)
-            clearance_grid = self._to_grid(clearance)
+            # Use ceil for minimum clearance to ensure conservative placement
+            clearance_grid = self._to_grid_ceil(clearance)
             max_clearance = max(max_clearance, clearance_grid)
 
         return max_clearance
@@ -473,7 +487,8 @@ class PlacementSolver:
                 if s1.id >= s2.id:  # Skip self and duplicates
                     continue
                 clearance = self.rules.get_clearance(s1.type, s2.type)
-                clearance_grid = self._to_grid(clearance)
+                # Use ceil for minimum clearance to ensure conservative placement
+                clearance_grid = self._to_grid_ceil(clearance)
                 max_clearance = max(max_clearance, clearance_grid)
         return max_clearance
 
