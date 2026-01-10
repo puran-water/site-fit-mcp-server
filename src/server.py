@@ -5,11 +5,17 @@ with FastAPI for static file serving (viewer).
 """
 
 import asyncio
+import json
 import logging
+import os
+import shutil
 import sys
+import tempfile
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import structlog
 from mcp.server.fastmcp import FastMCP
 
 from .pipeline import generate_site_fits
@@ -27,14 +33,38 @@ from .tools.sitefit_tools import (
 # Path to static files
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
-# Configure logging to stderr (required for MCP stdio transport)
+# Persistence configuration
+PERSISTENCE_DIR = Path.home() / ".sitefit" / "jobs"
+SCHEMA_VERSION = "1.0"
+DEFAULT_RETENTION_DAYS = 7
+
+# Configure structured logging (JSON to stderr for MCP compatibility)
 # stdio servers must NOT log to stdout as it interferes with JSON-RPC
+structlog.configure(
+    processors=[
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+        structlog.processors.JSONRenderer(),
+    ],
+    wrapper_class=structlog.stdlib.BoundLogger,
+    context_class=dict,
+    logger_factory=structlog.stdlib.LoggerFactory(),
+    cache_logger_on_first_use=True,
+)
+
+# Ensure stdlib logging goes to stderr
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    stream=sys.stderr,  # Critical: use stderr, not stdout
+    format="%(message)s",
+    stream=sys.stderr,
 )
-logger = logging.getLogger(__name__)
+
+logger = structlog.get_logger(__name__)
 
 # Create MCP server (following Python naming convention: {service}_mcp)
 mcp = FastMCP(
@@ -47,6 +77,161 @@ mcp = FastMCP(
 # In-memory storage for jobs and solutions
 _jobs: dict[str, dict[str, Any]] = {}
 _solutions: dict[str, Any] = {}
+
+
+# =============================================================================
+# Persistence Functions (atomic writes to ~/.sitefit/jobs/)
+# =============================================================================
+
+def _persist_job(job_id: str, job_data: dict) -> None:
+    """Persist job and its solutions to disk with atomic writes.
+
+    Uses temp file + rename pattern to prevent corruption on crash.
+    Each job is stored in its own directory with:
+    - job.json: Job metadata and request
+    - {solution_id}.json: Each solution's full data
+    """
+    try:
+        job_dir = PERSISTENCE_DIR / job_id
+        job_dir.mkdir(parents=True, exist_ok=True)
+
+        # Add schema version and timestamp for future migration
+        persist_data = {
+            **job_data,
+            "_schema_version": SCHEMA_VERSION,
+            "_persisted_at": datetime.utcnow().isoformat(),
+        }
+
+        # Atomic write: temp file + rename
+        target = job_dir / "job.json"
+        with tempfile.NamedTemporaryFile(
+            mode='w', dir=job_dir, delete=False, suffix='.tmp'
+        ) as tmp:
+            json.dump(persist_data, tmp, indent=2, default=str)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.rename(tmp.name, target)
+
+        # Persist each solution
+        for sol_id in job_data.get("solution_ids", []):
+            if sol_id in _solutions:
+                _persist_solution(job_dir, sol_id, _solutions[sol_id])
+
+        logger.info(
+            "job_persisted",
+            job_id=job_id,
+            solution_count=len(job_data.get("solution_ids", [])),
+            path=str(job_dir),
+        )
+
+    except Exception as e:
+        logger.warning("job_persist_failed", job_id=job_id, error=str(e))
+
+
+def _persist_solution(job_dir: Path, sol_id: str, sol_data: dict) -> None:
+    """Persist a single solution with atomic write."""
+    try:
+        target = job_dir / f"{sol_id}.json"
+        with tempfile.NamedTemporaryFile(
+            mode='w', dir=job_dir, delete=False, suffix='.tmp'
+        ) as tmp:
+            json.dump(sol_data, tmp, indent=2, default=str)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+        os.rename(tmp.name, target)
+    except Exception as e:
+        logger.warning("solution_persist_failed", solution_id=sol_id, error=str(e))
+
+
+def _load_job(job_id: str) -> dict | None:
+    """Load job from disk if exists, restoring to memory.
+
+    Returns None if job doesn't exist on disk.
+    Also loads all associated solutions into _solutions dict.
+    """
+    job_dir = PERSISTENCE_DIR / job_id
+    job_file = job_dir / "job.json"
+
+    if not job_file.exists():
+        return None
+
+    try:
+        with open(job_file) as f:
+            job_data = json.load(f)
+
+        # Strip internal fields before returning
+        job_data.pop("_schema_version", None)
+        job_data.pop("_persisted_at", None)
+
+        # Load all solutions for this job
+        for sol_id in job_data.get("solution_ids", []):
+            sol_file = job_dir / f"{sol_id}.json"
+            if sol_file.exists() and sol_id not in _solutions:
+                with open(sol_file) as f:
+                    _solutions[sol_id] = json.load(f)
+
+        # Restore to memory
+        _jobs[job_id] = job_data
+        logger.info(
+            "job_loaded_from_disk",
+            job_id=job_id,
+            solution_count=len(job_data.get("solution_ids", [])),
+        )
+
+        return job_data
+
+    except Exception as e:
+        logger.warning("job_load_failed", job_id=job_id, error=str(e))
+        return None
+
+
+def _cleanup_old_jobs(max_age_days: int = DEFAULT_RETENTION_DAYS) -> int:
+    """Remove jobs older than max_age_days.
+
+    Returns the number of jobs cleaned up.
+    """
+    if not PERSISTENCE_DIR.exists():
+        return 0
+
+    cutoff = datetime.utcnow() - timedelta(days=max_age_days)
+    cleaned = 0
+
+    try:
+        for job_dir in PERSISTENCE_DIR.iterdir():
+            if not job_dir.is_dir():
+                continue
+
+            job_file = job_dir / "job.json"
+            if not job_file.exists():
+                continue
+
+            try:
+                with open(job_file) as f:
+                    data = json.load(f)
+                persisted_str = data.get("_persisted_at", "2000-01-01T00:00:00")
+                persisted = datetime.fromisoformat(persisted_str.replace("Z", "+00:00").replace("+00:00", ""))
+
+                if persisted < cutoff:
+                    shutil.rmtree(job_dir)
+                    cleaned += 1
+                    logger.info("job_cleaned_up", job_id=job_dir.name)
+            except Exception as e:
+                logger.warning("job_cleanup_check_failed", job_id=job_dir.name, error=str(e))
+
+    except Exception as e:
+        logger.warning("jobs_cleanup_failed", error=str(e))
+
+    return cleaned
+
+
+def _try_load_from_disk(job_id: str) -> bool:
+    """Try to load a job from disk if not in memory.
+
+    Returns True if job was loaded (or already in memory).
+    """
+    if job_id in _jobs:
+        return True
+    return _load_job(job_id) is not None
 
 
 @mcp.tool(
@@ -117,15 +302,19 @@ async def sitefit_generate(
 
         # Store solutions and original request for contract export
         job_id = stats.get("job_id", "unknown")
-        _jobs[job_id] = {
+        job_data = {
             "status": "completed",
             "stats": stats,
             "solution_ids": [s.id for s in solutions],
             "request": request.model_dump(),  # Store for contract export
         }
+        _jobs[job_id] = job_data
 
         for sol in solutions:
             _solutions[sol.id] = sol.model_dump()
+
+        # Persist to disk for recovery after restart
+        _persist_job(job_id, job_data)
 
         # Build response with filtered fields based on detail_level
         solution_summaries = []
@@ -155,7 +344,7 @@ async def sitefit_generate(
         return response
 
     except Exception as e:
-        logger.exception("Generation failed")
+        logger.exception("generation_failed", error=str(e))
         return {
             "isError": True,
             "job_id": "error",
@@ -210,15 +399,19 @@ async def sitefit_generate_from_request(
 
         # Store solutions and original request for contract export
         job_id = stats.get("job_id", "unknown")
-        _jobs[job_id] = {
+        job_data = {
             "status": "completed",
             "stats": stats,
             "solution_ids": [s.id for s in solutions],
             "request": site_fit_request.model_dump(),  # Store for contract export
         }
+        _jobs[job_id] = job_data
 
         for sol in solutions:
             _solutions[sol.id] = sol.model_dump()
+
+        # Persist to disk for recovery after restart
+        _persist_job(job_id, job_data)
 
         # Build response with filtered fields based on detail_level
         solution_summaries = []
@@ -248,7 +441,7 @@ async def sitefit_generate_from_request(
         return response
 
     except Exception as e:
-        logger.exception("Generation failed")
+        logger.exception("generation_from_request_failed", error=str(e))
         return {
             "isError": True,
             "job_id": "error",
@@ -288,6 +481,14 @@ async def sitefit_get_solution(
     Returns:
         Full solution with placements, metrics, road_network, and features_geojson
     """
+    # Try to load from disk if not in memory
+    if solution_id not in _solutions:
+        # Solution ID format is typically "{job_id}-{index}"
+        # Try to extract job_id and load from disk
+        if "-" in solution_id:
+            job_id = solution_id.rsplit("-", 1)[0]
+            _try_load_from_disk(job_id)
+
     if solution_id not in _solutions:
         return {
             "isError": True,
@@ -348,6 +549,9 @@ async def sitefit_list_solutions(
     Returns:
         Dict with job_id, total, offset, limit, solutions, has_more, next_offset
     """
+    # Try to load from disk if not in memory
+    _try_load_from_disk(job_id)
+
     if job_id not in _jobs:
         return {
             "isError": True,
@@ -415,6 +619,9 @@ async def sitefit_job_status(
     Returns:
         Dict with job_id, status, progress (0-100), and job details
     """
+    # Try to load from disk if not in memory
+    _try_load_from_disk(job_id)
+
     if job_id not in _jobs:
         return {
             "isError": True,
@@ -472,6 +679,12 @@ async def sitefit_export(
     Returns:
         Dict with format, data (content), and metadata
     """
+    # Try to load from disk if not in memory
+    if solution_id not in _solutions:
+        if "-" in solution_id:
+            job_id = solution_id.rsplit("-", 1)[0]
+            _try_load_from_disk(job_id)
+
     if solution_id not in _solutions:
         return {
             "isError": True,
@@ -538,7 +751,7 @@ async def sitefit_export(
                 }
             return result
         except Exception as e:
-            logger.exception("SVG export failed")
+            logger.exception("svg_export_failed", solution_id=solution_id, error=str(e))
             return {
                 "isError": True,
                 "error": f"SVG export failed: {str(e)}",
@@ -611,6 +824,7 @@ async def sitefit_export(
                     struct_id = props.get("id", props.get("structure_id", ""))
                     struct_type = props.get("type", "unknown")
                     height = props.get("height", 5.0)
+                    dome_height_m = props.get("dome_height_m")  # May be None
 
                     # Determine shape and dimensions from geometry
                     if geom.get("type") == "Polygon":
@@ -628,12 +842,16 @@ async def sitefit_export(
                             else:
                                 footprint = {"shape": "rect", "w": width, "h": length}
 
-                            structures_data.append({
+                            struct_dict = {
                                 "id": struct_id,
                                 "type": struct_type,
                                 "footprint": footprint,
                                 "height": height,
-                            })
+                            }
+                            # Include dome_height_m if present (for digester dome covers)
+                            if dome_height_m is not None:
+                                struct_dict["dome_height_m"] = dome_height_m
+                            structures_data.append(struct_dict)
 
         # Build placements with 'id' instead of 'structure_id' for FreeCAD
         placements = solution.get("placements", [])
@@ -669,7 +887,9 @@ async def sitefit_export(
             }
 
         # Build contract data - always include essential fields for FreeCAD
+        # Uses Spatial Contract v1.0 schema
         contract_data = {
+            "contract_version": "1.0.0",
             "project": {
                 "name": "",
                 "id": solution_id,
@@ -677,6 +897,8 @@ async def sitefit_export(
             },
             "site": {
                 "boundary": site_data.get("boundary", []),
+                "units": "meters",
+                "crs": "local",
                 "entrances": site_data.get("entrances", []),
                 "keepouts": site_data.get("keepouts", []),
             },
@@ -685,15 +907,22 @@ async def sitefit_export(
             },
             "placements": contract_placements,
             "road_network": road_network_data,
+            "provenance": {
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "solver_version": "1.0.0",
+                "solution_id": solution_id,
+                "job_id": job_id if job_id else "",
+            },
         }
 
-        # Only include metadata in full mode
+        # Add metrics if available
+        if solution.get("metrics"):
+            contract_data["metrics"] = solution["metrics"]
+
+        # Only include extended metadata in full mode
         if detail_level == "full":
-            contract_data["metadata"] = {
-                "source": "sitefit_mcp",
-                "solution_id": solution_id,
-                "rank": solution.get("rank", 0),
-            }
+            contract_data["provenance"]["source"] = "sitefit_mcp"
+            contract_data["provenance"]["rank"] = solution.get("rank", 0)
 
         result = {
             "format": "contract",
@@ -753,6 +982,139 @@ async def sitefit_export_contract(
 
 @mcp.tool(
     annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_export_batch(
+    job_id: str,
+    solution_ids: list[str] | None = None,
+    include_roads: bool = True,
+    include_structures: bool = True,
+    limit: int = 10,
+    offset: int = 0,
+    detail_level: DetailLevel = "compact",
+) -> dict[str, Any]:
+    """Export multiple solutions from a job as contract JSONs in one call.
+
+    Eliminates the need for agents to loop through sitefit_get_solution for each
+    solution. Returns complete contracts ready for FreeCAD's present_layout_options.
+
+    Each contract includes:
+    - Site boundary, entrances, and keepouts
+    - Structure definitions with dimensions
+    - Placements with coordinates and rotations
+    - Road network geometry (optional)
+
+    Args:
+        job_id: Job ID from sitefit_generate
+        solution_ids: Optional list of specific solution IDs to export.
+                      If None, exports all solutions from the job.
+        include_roads: Include road network in each contract (default: True)
+        include_structures: Include structure definitions (default: True)
+        limit: Maximum contracts to return per call (default: 10, max: 50)
+        offset: Offset for pagination (default: 0)
+        detail_level: Response detail - "compact" (default) for essential fields,
+                      "full" for all fields including metadata
+
+    Returns:
+        Dict with contracts array, total count, pagination info, and has_more flag
+    """
+    # Try to load from disk if not in memory
+    _try_load_from_disk(job_id)
+
+    if job_id not in _jobs:
+        return {
+            "isError": True,
+            "error": f"Job {job_id} not found",
+            "suggestion": "Use sitefit_generate to create a job first",
+            "contracts": [],
+        }
+
+    job = _jobs[job_id]
+    all_solution_ids = job.get("solution_ids", [])
+
+    # Filter to requested solutions if specified
+    if solution_ids:
+        target_ids = [sid for sid in solution_ids if sid in all_solution_ids]
+        if not target_ids:
+            return {
+                "isError": True,
+                "error": "None of the specified solution_ids belong to this job",
+                "suggestion": f"Valid solution IDs for job {job_id}: {all_solution_ids[:5]}...",
+                "contracts": [],
+            }
+    else:
+        target_ids = all_solution_ids
+
+    # Apply pagination
+    total = len(target_ids)
+    limit = min(limit, 50)  # Cap at 50 to prevent payload explosion
+    paginated_ids = target_ids[offset : offset + limit]
+    has_more = offset + limit < total
+
+    # Build contracts for each solution
+    contracts = []
+    errors = []
+
+    for sol_id in paginated_ids:
+        try:
+            # Use existing export function
+            result = await sitefit_export(
+                solution_id=sol_id,
+                format="contract",
+                include_roads=include_roads,
+                detail_level=detail_level,
+            )
+
+            if result.get("isError"):
+                errors.append({"solution_id": sol_id, "error": result.get("error")})
+                continue
+
+            contract_data = result.get("data", {})
+
+            # Optionally strip structures to reduce payload
+            if not include_structures and "program" in contract_data:
+                contract_data["program"]["structures"] = []
+
+            # Add solution metadata for FreeCAD layer creation
+            # Include both underscore-prefixed (contract internal) and plain names
+            # for FreeCAD's present_layout_options/import_solutions_as_layers compatibility
+            contract_data["_solution_id"] = sol_id
+            contract_data["solution_id"] = sol_id  # FreeCAD alias
+            if sol_id in _solutions:
+                contract_data["_rank"] = _solutions[sol_id].get("rank", 0)
+                contract_data["rank"] = _solutions[sol_id].get("rank", 0)  # FreeCAD alias
+                contract_data["_metrics"] = _solutions[sol_id].get("metrics", {})
+                contract_data["metrics"] = _solutions[sol_id].get("metrics", {})  # FreeCAD alias
+
+            # Add top-level structures alias from program.structures for FreeCAD
+            if "program" in contract_data and "structures" in contract_data["program"]:
+                contract_data["structures"] = contract_data["program"]["structures"]
+
+            contracts.append(contract_data)
+
+        except Exception as e:
+            logger.warning("batch_export_solution_failed", solution_id=sol_id, error=str(e))
+            errors.append({"solution_id": sol_id, "error": str(e)})
+
+    return {
+        "job_id": job_id,
+        "contracts": contracts,
+        "total": total,
+        "count": len(contracts),
+        "limit": limit,
+        "offset": offset,
+        "has_more": has_more,
+        "next_offset": offset + limit if has_more else None,
+        "errors": errors if errors else None,
+    }
+
+
+@mcp.tool(
+    annotations={
         "readOnlyHint": False,  # Creates files on disk
         "destructiveHint": False,
         "idempotentHint": True,
@@ -768,22 +1130,43 @@ async def sitefit_export_pack(
 ) -> dict[str, Any]:
     """Export solution as a complete deliverable package with multiple formats.
 
-    Generates bundled exports for proposal exhibits and civil handoff:
-    - PDF plan sheet with layout diagram, scale bar, legend, and quantities
-    - DXF CAD file with layers: BOUNDARY, BUILDLIMIT, KEEPOUTS, STRUCTURES, ROADS
-    - CSV with ROM quantities: pad areas, road length, pipe proxies, fence perimeter
-    - GeoJSON for visualization and GIS integration
+    Generates bundled exports for proposal exhibits and civil handoff.
+    This is the GUARANTEED headless export method - works without FreeCAD GUI.
+
+    Available formats:
+    - pdf: Plan sheet with layout, scale bar, legend, quantities (uses ReportLab - headless safe)
+    - dxf: CAD file with layers: BOUNDARY, BUILDLIMIT, KEEPOUTS, STRUCTURES, ROADS
+    - csv: ROM quantities - pad areas, road length, pipe proxies, fence perimeter
+    - geojson: GeoJSON for visualization and GIS integration
+    - svg: SVG vector graphics for web viewing (no external dependencies)
 
     Args:
         solution_id: Solution ID from sitefit_generate
-        formats: List of formats to generate - 'pdf', 'dxf', 'csv', 'geojson' (default: csv, geojson)
+        formats: List of formats to generate - 'pdf', 'dxf', 'csv', 'geojson', 'svg' (default: csv, geojson)
         output_dir: Directory for output files (uses temp directory if not specified)
         project_name: Project name for PDF title block
         drawing_number: Drawing number for PDF title block
 
     Returns:
         Dict with success, files (format -> path mapping), quantities, and any errors
+
+    Examples:
+        Export full deliverable pack:
+        ```json
+        {
+            "solution_id": "job_abc123-0",
+            "formats": ["pdf", "dxf", "csv", "geojson", "svg"],
+            "project_name": "Acme WWTP Expansion",
+            "drawing_number": "100-GA-001"
+        }
+        ```
     """
+    # Try to load from disk if not in memory
+    if solution_id not in _solutions:
+        if "-" in solution_id:
+            job_id = solution_id.rsplit("-", 1)[0]
+            _try_load_from_disk(job_id)
+
     if solution_id not in _solutions:
         return {
             "isError": True,
@@ -864,7 +1247,7 @@ async def sitefit_export_pack(
             "suggestion": "Some formats require optional dependencies. Install with: pip install 'site-fit-mcp[export]'",
         }
     except Exception as e:
-        logger.exception("Export pack failed")
+        logger.exception("export_pack_failed", solution_id=solution_id, error=str(e))
         return {
             "isError": True,
             "error": f"Export failed: {str(e)}",
@@ -897,7 +1280,7 @@ async def ruleset_list() -> dict[str, Any]:
             "count": len(rulesets),
         }
     except Exception as e:
-        logger.exception("Failed to list rulesets")
+        logger.exception("rulesets_list_failed", error=str(e))
         return {
             "isError": True,
             "error": str(e),
@@ -943,7 +1326,7 @@ async def ruleset_get(
             "suggestion": "Use ruleset_list to see available rulesets",
         }
     except Exception as e:
-        logger.exception(f"Failed to load ruleset '{name}'")
+        logger.exception("ruleset_load_failed", ruleset_name=name, error=str(e))
         return {
             "isError": True,
             "error": str(e),
@@ -1073,7 +1456,7 @@ async def sitefit_load_gis_file(
             "error": f"File not found: {e}",
         }
     except Exception as e:
-        logger.exception(f"Failed to load GIS file: {file_path}")
+        logger.exception("gis_file_load_failed", file_path=file_path, error=str(e))
         return {
             "success": False,
             "error": str(e),
@@ -1124,15 +1507,210 @@ async def sitefit_list_gis_layers(
             "error": f"File not found: {e}",
         }
     except Exception as e:
-        logger.exception(f"Failed to list GIS layers: {file_path}")
+        logger.exception("gis_layers_list_failed", file_path=file_path, error=str(e))
         return {
             "success": False,
             "error": str(e),
         }
 
 
+@mcp.tool(
+    annotations={
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    }
+)
+async def sitefit_compare_solutions(
+    solution_id_a: str,
+    solution_id_b: str,
+    detail_level: DetailLevel = "compact",
+) -> dict[str, Any]:
+    """Compare two solutions and explain differences (Phase 5: Solution Diff).
+
+    Useful for understanding why different solutions were ranked differently
+    and what changed between layout options.
+
+    Args:
+        solution_id_a: First solution ID (typically lower rank)
+        solution_id_b: Second solution ID (typically higher rank)
+        detail_level: Response detail level ("compact" or "full")
+
+    Returns:
+        Comparison dict with summary, moved structures, metric deltas, and road changes
+    """
+    logger.info(
+        "compare_solutions_started",
+        solution_id_a=solution_id_a,
+        solution_id_b=solution_id_b,
+    )
+
+    # Fetch both solutions
+    sol_a = _solutions.get(solution_id_a)
+    sol_b = _solutions.get(solution_id_b)
+
+    if not sol_a:
+        return {
+            "success": False,
+            "error": f"Solution not found: {solution_id_a}",
+        }
+    if not sol_b:
+        return {
+            "success": False,
+            "error": f"Solution not found: {solution_id_b}",
+        }
+
+    # Get placements (dict by structure_id)
+    placements_a = {p.get("structure_id", p.get("id", "")): p for p in sol_a.get("placements", [])}
+    placements_b = {p.get("structure_id", p.get("id", "")): p for p in sol_b.get("placements", [])}
+
+    # Find moved structures
+    moved_structures = []
+    rotation_changes = []
+
+    all_structure_ids = set(placements_a.keys()) | set(placements_b.keys())
+
+    for struct_id in all_structure_ids:
+        p_a = placements_a.get(struct_id)
+        p_b = placements_b.get(struct_id)
+
+        if p_a and p_b:
+            x_a, y_a = p_a.get("x", 0), p_a.get("y", 0)
+            x_b, y_b = p_b.get("x", 0), p_b.get("y", 0)
+            rot_a = p_a.get("rotation_deg", p_a.get("rotation", 0))
+            rot_b = p_b.get("rotation_deg", p_b.get("rotation", 0))
+
+            delta_x = round(x_b - x_a, 2)
+            delta_y = round(y_b - y_a, 2)
+
+            # Structure moved if delta > 0.1m
+            if abs(delta_x) > 0.1 or abs(delta_y) > 0.1:
+                moved_structures.append({
+                    "id": struct_id,
+                    "delta_x": delta_x,
+                    "delta_y": delta_y,
+                    "a_position": [round(x_a, 2), round(y_a, 2)],
+                    "b_position": [round(x_b, 2), round(y_b, 2)],
+                })
+
+            # Rotation changed
+            if rot_a != rot_b:
+                rotation_changes.append({
+                    "id": struct_id,
+                    "from_deg": rot_a,
+                    "to_deg": rot_b,
+                })
+        elif p_a and not p_b:
+            moved_structures.append({
+                "id": struct_id,
+                "status": "removed_in_b",
+                "a_position": [round(p_a.get("x", 0), 2), round(p_a.get("y", 0), 2)],
+            })
+        elif p_b and not p_a:
+            moved_structures.append({
+                "id": struct_id,
+                "status": "added_in_b",
+                "b_position": [round(p_b.get("x", 0), 2), round(p_b.get("y", 0), 2)],
+            })
+
+    # Compute metric deltas
+    metrics_a = sol_a.get("metrics", {})
+    metrics_b = sol_b.get("metrics", {})
+
+    # Handle Pydantic model or dict
+    if hasattr(metrics_a, "model_dump"):
+        metrics_a = metrics_a.model_dump()
+    if hasattr(metrics_b, "model_dump"):
+        metrics_b = metrics_b.model_dump()
+
+    metric_deltas = {}
+    key_metrics = ["road_length", "compactness", "pipe_length_weighted", "site_utilization", "topology_penalty"]
+
+    for key in key_metrics:
+        val_a = metrics_a.get(key, 0) or 0
+        val_b = metrics_b.get(key, 0) or 0
+        delta = val_b - val_a
+        if abs(delta) > 0.001:
+            metric_deltas[key] = round(delta, 3)
+
+    # Road network changes
+    road_a = sol_a.get("road_network") or {}
+    road_b = sol_b.get("road_network") or {}
+
+    if hasattr(road_a, "model_dump"):
+        road_a = road_a.model_dump()
+    if hasattr(road_b, "model_dump"):
+        road_b = road_b.model_dump()
+
+    segments_a = road_a.get("segments", []) if road_a else []
+    segments_b = road_b.get("segments", []) if road_b else []
+
+    seg_ids_a = {s.get("id", f"seg_{i}") for i, s in enumerate(segments_a)}
+    seg_ids_b = {s.get("id", f"seg_{i}") for i, s in enumerate(segments_b)}
+
+    road_network_changes = {
+        "segments_in_a": len(segments_a),
+        "segments_in_b": len(segments_b),
+        "segments_added": list(seg_ids_b - seg_ids_a),
+        "segments_removed": list(seg_ids_a - seg_ids_b),
+        "length_a": round(road_a.get("total_length", 0), 2) if road_a else 0,
+        "length_b": round(road_b.get("total_length", 0), 2) if road_b else 0,
+    }
+    road_network_changes["length_delta"] = round(
+        road_network_changes["length_b"] - road_network_changes["length_a"], 2
+    )
+
+    # Build summary
+    summary_parts = []
+    if moved_structures:
+        summary_parts.append(f"{len(moved_structures)} structure(s) repositioned")
+    if rotation_changes:
+        summary_parts.append(f"{len(rotation_changes)} rotation change(s)")
+    if road_network_changes["length_delta"] != 0:
+        delta_str = f"+{road_network_changes['length_delta']}" if road_network_changes['length_delta'] > 0 else str(road_network_changes['length_delta'])
+        summary_parts.append(f"road length {delta_str}m")
+    if metric_deltas.get("compactness"):
+        delta_str = f"+{metric_deltas['compactness']}" if metric_deltas['compactness'] > 0 else str(metric_deltas['compactness'])
+        summary_parts.append(f"compactness {delta_str}")
+
+    summary = "; ".join(summary_parts) if summary_parts else "Solutions are identical"
+
+    result = {
+        "success": True,
+        "solution_a": solution_id_a,
+        "solution_b": solution_id_b,
+        "rank_a": sol_a.get("rank"),
+        "rank_b": sol_b.get("rank"),
+        "summary": summary,
+        "moved_structures": moved_structures,
+        "rotation_changes": rotation_changes,
+        "metric_deltas": metric_deltas,
+        "road_network_changes": road_network_changes,
+    }
+
+    # Add full metrics in full mode
+    if detail_level == "full":
+        result["metrics_a"] = metrics_a
+        result["metrics_b"] = metrics_b
+
+    logger.info(
+        "compare_solutions_complete",
+        solution_id_a=solution_id_a,
+        solution_id_b=solution_id_b,
+        moved_count=len(moved_structures),
+        rotation_count=len(rotation_changes),
+    )
+
+    return result
+
+
 def run_server():
     """Run the MCP server (MCP transport only)."""
+    # Cleanup old jobs on startup (7-day retention policy)
+    cleaned = _cleanup_old_jobs()
+    if cleaned > 0:
+        logger.info("startup_cleanup_complete", jobs_cleaned=cleaned)
 
     asyncio.run(mcp.run())
 
@@ -1149,6 +1727,11 @@ def run_with_static_server(host: str = "0.0.0.0", port: int = 8765):
         host: Host to bind to
         port: Port to listen on
     """
+    # Cleanup old jobs on startup (7-day retention policy)
+    cleaned = _cleanup_old_jobs()
+    if cleaned > 0:
+        logger.info("startup_cleanup_complete", jobs_cleaned=cleaned)
+
     import uvicorn
     from fastapi import FastAPI, HTTPException
     from fastapi.middleware.cors import CORSMiddleware
@@ -1240,7 +1823,7 @@ def run_with_static_server(host: str = "0.0.0.0", port: int = 8765):
                 raise HTTPException(status_code=400, detail=result["error"])
             return result
         except Exception as e:
-            logger.exception("API generate failed")
+            logger.exception("api_generate_failed", error=str(e))
             raise HTTPException(status_code=500, detail=str(e))
 
     # ========================================================================
@@ -1262,10 +1845,14 @@ def run_with_static_server(host: str = "0.0.0.0", port: int = 8765):
         async def serve_app_js():
             return FileResponse(STATIC_DIR / "app.js", media_type="application/javascript")
 
-    logger.info(f"Starting Site-Fit server on http://{host}:{port}")
-    logger.info(f"  - Viewer:     http://{host}:{port}/")
-    logger.info(f"  - REST API:   http://{host}:{port}/api/")
-    logger.info(f"  - MCP (SSE):  http://{host}:{port}/mcp")
+    logger.info(
+        "server_starting",
+        host=host,
+        port=port,
+        viewer_url=f"http://{host}:{port}/",
+        api_url=f"http://{host}:{port}/api/",
+        mcp_url=f"http://{host}:{port}/mcp",
+    )
 
     uvicorn.run(app, host=host, port=port)
 

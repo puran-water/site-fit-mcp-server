@@ -146,6 +146,12 @@ class StructureFootprint(BaseModel):
         description="Allowed orientations in degrees (only applies to rectangles)"
     )
     height: float | None = Field(default=None, ge=0, description="Structure height in meters")
+    dome_height_m: float | None = Field(
+        default=None, ge=0,
+        description="Dome/membrane cover height in meters (for digesters). "
+                    "The 'height' parameter represents SHELL height; dome is added on top. "
+                    "If not provided, FreeCAD uses DOME_RATIO * diameter as fallback."
+    )
     access: AccessRequirement | None = Field(
         default=None, description="Vehicle access requirement"
     )

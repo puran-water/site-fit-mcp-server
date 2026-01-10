@@ -1,0 +1,469 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sitefit.local/schemas/spatial_contract_v1.json",
+  "title": "Spatial Contract",
+  "description": "Data interchange format between site-fit solver and FreeCAD visualization layer",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["contract_version", "project", "site", "placements"],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Contract schema version for migration support"
+    },
+    "project": {
+      "type": "object",
+      "description": "Project identification metadata",
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique project identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable project name"
+        },
+        "revision": {
+          "type": "string",
+          "default": "A",
+          "description": "Document revision letter/number"
+        },
+        "client": {
+          "type": "string",
+          "description": "Client or owner name"
+        }
+      }
+    },
+    "site": {
+      "type": "object",
+      "description": "Site geometry and constraints",
+      "required": ["boundary", "units"],
+      "properties": {
+        "boundary": {
+          "type": "array",
+          "description": "Site boundary polygon as [[x,y], ...] (must be closed)",
+          "items": {
+            "type": "array",
+            "items": {"type": "number"},
+            "minItems": 2,
+            "maxItems": 2
+          },
+          "minItems": 4
+        },
+        "units": {
+          "type": "string",
+          "enum": ["meters", "feet"],
+          "default": "meters",
+          "description": "Coordinate units for all dimensions"
+        },
+        "crs": {
+          "type": "string",
+          "default": "local",
+          "description": "Coordinate reference system (EPSG code or 'local')"
+        },
+        "north_rotation_deg": {
+          "type": "number",
+          "default": 0,
+          "description": "Rotation of site north from grid north (degrees CCW)"
+        },
+        "setbacks": {
+          "type": "object",
+          "description": "Setback distances from boundaries",
+          "properties": {
+            "north": {"type": "number"},
+            "south": {"type": "number"},
+            "east": {"type": "number"},
+            "west": {"type": "number"},
+            "default": {"type": "number", "default": 3}
+          }
+        },
+        "entrances": {
+          "type": "array",
+          "description": "Site entrance locations",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {"type": "string"},
+              "position": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2,
+                "description": "Entrance position [x, y]"
+              },
+              "point": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2,
+                "description": "Entrance position [x, y] (legacy naming)"
+              },
+              "width": {"type": "number", "default": 6}
+            }
+          }
+        },
+        "keepouts": {
+          "type": "array",
+          "description": "No-build zones",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {"type": "string"},
+              "polygon": {
+                "type": "array",
+                "description": "Keepout polygon [[x,y], ...]",
+                "items": {
+                  "type": "array",
+                  "items": {"type": "number"},
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "geometry": {
+                "type": "object",
+                "description": "GeoJSON geometry (legacy naming)",
+                "properties": {
+                  "type": {"type": "string"},
+                  "coordinates": {"type": "array"}
+                }
+              },
+              "reason": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "program": {
+      "type": "object",
+      "description": "Equipment program (structures to be placed)",
+      "properties": {
+        "structures": {
+          "type": "array",
+          "description": "List of structures with footprints",
+          "items": {
+            "type": "object",
+            "required": ["id", "type", "footprint"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique equipment tag (e.g., 'TK-101', 'BLDG-001')"
+              },
+              "type": {
+                "type": "string",
+                "description": "Equipment type category"
+              },
+              "footprint": {
+                "type": "object",
+                "description": "Envelope dimensions",
+                "required": ["shape"],
+                "properties": {
+                  "shape": {
+                    "type": "string",
+                    "enum": ["rectangle", "rect", "circle"],
+                    "description": "Shape type ('rectangle' or 'rect' for rectangular, 'circle' for circular)"
+                  },
+                  "w": {
+                    "type": "number",
+                    "description": "Width in site units (for rectangle/rect)"
+                  },
+                  "l": {
+                    "type": "number",
+                    "description": "Length in site units (for rectangle)"
+                  },
+                  "h": {
+                    "type": "number",
+                    "description": "Height/length in site units (for rect - legacy naming)"
+                  },
+                  "d": {
+                    "type": "number",
+                    "description": "Diameter in site units (for circle)"
+                  },
+                  "height": {
+                    "type": "number",
+                    "description": "Height for 3D representation"
+                  }
+                }
+              },
+              "constraints": {
+                "type": "object",
+                "description": "Placement constraints",
+                "properties": {
+                  "min_clearance": {"type": "number"},
+                  "access_required": {"type": "boolean"},
+                  "allowed_rotations": {
+                    "type": "array",
+                    "items": {"type": "integer"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "placements": {
+      "type": "array",
+      "description": "Solved placement positions",
+      "items": {
+        "type": "object",
+        "required": ["id", "x", "y"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Structure ID matching program.structures[].id"
+          },
+          "x": {
+            "type": "number",
+            "description": "X coordinate of structure center"
+          },
+          "y": {
+            "type": "number",
+            "description": "Y coordinate of structure center"
+          },
+          "rotation_deg": {
+            "type": "integer",
+            "default": 0,
+            "description": "Rotation in degrees (0, 90, 180, 270)"
+          }
+        }
+      }
+    },
+    "road_network": {
+      "type": ["object", "null"],
+      "description": "Generated access road network (null if no roads)",
+      "properties": {
+        "segments": {
+          "type": "array",
+          "description": "Road segments",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Segment identifier"
+              },
+              "start": {
+                "type": ["array", "null"],
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2,
+                "description": "Start point [x, y] (null if using centerline)"
+              },
+              "end": {
+                "type": ["array", "null"],
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2,
+                "description": "End point [x, y] (null if using centerline)"
+              },
+              "waypoints": {
+                "type": ["array", "null"],
+                "description": "Intermediate waypoints [[x,y], ...] (null if using centerline)",
+                "items": {
+                  "type": "array",
+                  "items": {"type": "number"},
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "centerline": {
+                "type": "array",
+                "description": "Full centerline as [[x,y], ...] (alternative to start/end/waypoints)",
+                "items": {
+                  "type": "array",
+                  "items": {"type": "number"},
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "width": {
+                "type": "number",
+                "default": 6,
+                "description": "Pavement width in site units"
+              },
+              "connects_to": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "IDs of connected segments or structures"
+              },
+              "edge_left": {
+                "type": "array",
+                "description": "Left edge of pavement (computed)",
+                "items": {
+                  "type": "array",
+                  "items": {"type": "number"},
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "edge_right": {
+                "type": "array",
+                "description": "Right edge of pavement (computed)",
+                "items": {
+                  "type": "array",
+                  "items": {"type": "number"},
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "surface_type": {
+                "type": "string",
+                "enum": ["asphalt", "gravel", "concrete"],
+                "default": "asphalt"
+              }
+            }
+          }
+        },
+        "intersections": {
+          "type": "array",
+          "description": "Road intersections",
+          "items": {
+            "type": "object",
+            "required": ["id", "center"],
+            "properties": {
+              "id": {"type": "string"},
+              "center": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "corner_radii": {
+                "type": "array",
+                "items": {"type": "number"}
+              }
+            }
+          }
+        },
+        "total_length": {
+          "type": "number",
+          "description": "Total road length in site units"
+        },
+        "entrances_connected": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of entrance IDs connected by roads"
+        },
+        "structures_accessible": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "List of structure IDs with road access"
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "description": "Solution quality metrics",
+      "properties": {
+        "compactness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Layout compactness score (0-1)"
+        },
+        "road_length_m": {
+          "type": "number",
+          "description": "Total road length in meters (contract naming)"
+        },
+        "road_length": {
+          "type": "number",
+          "description": "Total road length in meters (SolutionMetrics naming)"
+        },
+        "pipe_length_proxy_m": {
+          "type": "number",
+          "description": "Estimated interconnecting pipe length (contract naming)"
+        },
+        "pipe_length_weighted": {
+          "type": "number",
+          "description": "Weighted pipe length (SolutionMetrics naming)"
+        },
+        "pipe_length_by_type": {
+          "type": "object",
+          "description": "Pipe length breakdown by type",
+          "additionalProperties": {"type": "number"}
+        },
+        "utilization_pct": {
+          "type": "number",
+          "description": "Site utilization percentage (contract naming)"
+        },
+        "site_utilization": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Site utilization ratio (SolutionMetrics naming)"
+        },
+        "topology_penalty": {
+          "type": "number",
+          "description": "Penalty for topology violations"
+        },
+        "road_area_m2": {
+          "type": "number",
+          "description": "Total road surface area in square meters"
+        },
+        "max_dead_end_length": {
+          "type": "number",
+          "description": "Maximum dead-end road length"
+        },
+        "intersection_count": {
+          "type": "integer",
+          "description": "Number of road intersections"
+        },
+        "min_throat_width": {
+          "type": ["number", "null"],
+          "description": "Minimum throat width between structures"
+        },
+        "is_feasible": {
+          "type": "boolean",
+          "description": "Whether the solution satisfies all hard constraints"
+        },
+        "constraint_slack": {
+          "type": "object",
+          "description": "Minimum slack per constraint category",
+          "additionalProperties": {"type": "number"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Traceability metadata",
+      "properties": {
+        "inputs_hash": {
+          "type": "string",
+          "description": "SHA-256 hash of input parameters"
+        },
+        "ruleset_id": {
+          "type": "string",
+          "description": "Ruleset used for generation"
+        },
+        "solver_seed": {
+          "type": "integer",
+          "description": "Random seed for reproducibility"
+        },
+        "generated_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 generation timestamp"
+        },
+        "solver_version": {
+          "type": "string",
+          "description": "Site-fit solver version"
+        },
+        "solution_id": {
+          "type": "string",
+          "description": "Unique solution identifier"
+        },
+        "job_id": {
+          "type": "string",
+          "description": "Parent job identifier"
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}
